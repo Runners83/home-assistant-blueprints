@@ -1,34 +1,57 @@
 blueprint:
-  name: Garagenlicht bei Tor/Tür mit Auto-Aus
-  description: Schaltet Garagenlicht bei offenem Tor/Tür oder manueller Einschaltung ein und nach einstellbarer Zeit wieder aus.
+  name: Garage - Licht mit Türsensoren, Auto-Aus und Zusatzleuchten bei Dunkelheit
   domain: automation
   input:
     open_sensors:
-      name: Tor-/Türsensoren
-      description: Sensoren, die bei offenem Tor/Tür auf "on" gehen.
+      name: Tür-/Torsensoren
       selector:
         entity:
           multiple: true
 
-    garage_light:
-      name: Garagenlicht
+    main_light:
+      name: Hauptlicht Garage
       selector:
         entity:
           domain:
             - light
             - switch
 
-    max_on_time:
-      name: Maximale Einschaltdauer
+    extra_lights:
+      name: Zusatzleuchten bei Dunkelheit
+      selector:
+        entity:
+          domain:
+            - light
+            - switch
+          multiple: true
+
+    lux_sensor:
+      name: Helligkeitssensor
+      selector:
+        entity:
+          domain: sensor
+
+    lux_threshold:
+      name: Dunkelheitsgrenze in Lux
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 500
+          step: 1
+          unit_of_measurement: lx
+
+    main_max_on_time:
+      name: Hauptlicht maximale Einschaltdauer
       default:
         minutes: 20
       selector:
         duration:
 
-    off_after_closed:
-      name: Ausschalten, wenn alles geschlossen ist
+    extra_on_time:
+      name: Zusatzleuchten Einschaltdauer
       default:
-        minutes: 1
+        minutes: 3
       selector:
         duration:
 
@@ -37,31 +60,51 @@ max_exceeded: silent
 
 variables:
   sensors: !input open_sensors
+  lux_sensor: !input lux_sensor
+  lux_threshold: !input lux_threshold
 
 triggers:
   - trigger: state
     entity_id: !input open_sensors
-    to: "on"
   - trigger: state
-    entity_id: !input garage_light
+    entity_id: !input main_light
     to: "on"
 
 actions:
-  - action: homeassistant.turn_on
-    target:
-      entity_id: !input garage_light
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ trigger.entity_id in sensors and trigger.to_state.state not in ['off', 'closed', '0', 'unavailable', 'unknown'] }}
+        sequence:
+          - action: homeassistant.turn_on
+            target:
+              entity_id: !input main_light
 
-  - wait_for_trigger:
-      - trigger: template
-        value_template: >
-          {{ expand(sensors)
-             | selectattr('state', 'eq', 'on')
-             | list
-             | count == 0 }}
-        for: !input off_after_closed
-    timeout: !input max_on_time
-    continue_on_timeout: true
+          - if:
+              - condition: template
+                value_template: >
+                  {{ states(lux_sensor) | float(9999) < lux_threshold }}
+            then:
+              - action: homeassistant.turn_on
+                target:
+                  entity_id: !input extra_lights
+              - delay: !input extra_on_time
+              - action: homeassistant.turn_off
+                target:
+                  entity_id: !input extra_lights
+
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ trigger.entity_id == states[!input main_light].entity_id if false else true }}
+        sequence:
+          - action: homeassistant.turn_on
+            target:
+              entity_id: !input main_light
+
+  - delay: !input main_max_on_time
 
   - action: homeassistant.turn_off
     target:
-      entity_id: !input garage_light
+      entity_id: !input main_light
