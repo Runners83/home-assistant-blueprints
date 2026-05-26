@@ -1,0 +1,179 @@
+blueprint:
+  name: Sonnenschutz Rollo mit Lüftung, Markise und Nacht-Sperre
+  description: >
+    Fährt ein Rollo bei Sonne auf Lüftungsposition, fährt bei Fensteröffnung
+    oder Markise hoch und blockiert, wenn das Rollo komplett geschlossen ist.
+  domain: automation
+
+  input:
+    master_switch:
+      name: Master-Schalter Sonnenschutz
+      selector:
+        entity:
+          domain: input_boolean
+
+    local_switch:
+      name: Schalter für dieses Rollo
+      selector:
+        entity:
+          domain: input_boolean
+
+    cover_entity:
+      name: Rollo
+      selector:
+        entity:
+          domain: cover
+
+    sun_active:
+      name: Sonnenschutz nötig für diesen Raum
+      selector:
+        entity:
+          domain: binary_sensor
+
+    sun_in_front:
+      name: Sonne steht vor diesem Fenster
+      selector:
+        entity:
+          domain: binary_sensor
+
+    window_contact:
+      name: Fensterkontakt
+      selector:
+        entity:
+          domain: binary_sensor
+
+    awning:
+      name: Markise optional
+      default: []
+      selector:
+        entity:
+          domain: cover
+
+    ventilation_position:
+      name: Lüftungsposition
+      default: 15
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+
+    open_position:
+      name: Offen-Position
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+
+    closed_position:
+      name: Geschlossen-Position / Nachtposition
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+
+    closed_tolerance:
+      name: Toleranz für geschlossen
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 20
+          unit_of_measurement: "%"
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input master_switch
+  - platform: state
+    entity_id: !input local_switch
+  - platform: state
+    entity_id: !input sun_active
+  - platform: state
+    entity_id: !input sun_in_front
+  - platform: state
+    entity_id: !input window_contact
+  - platform: state
+    entity_id: !input awning
+
+variables:
+  master_switch: !input master_switch
+  local_switch: !input local_switch
+  cover_entity: !input cover_entity
+  sun_active: !input sun_active
+  sun_in_front: !input sun_in_front
+  window_contact: !input window_contact
+  awning: !input awning
+  ventilation_position: !input ventilation_position
+  open_position: !input open_position
+  closed_position: !input closed_position
+  closed_tolerance: !input closed_tolerance
+
+  has_awning: "{{ awning != [] }}"
+
+  current_position: "{{ state_attr(cover_entity, 'current_position') | int(-1) }}"
+  is_fully_closed: >
+    {{
+      current_position != -1
+      and (current_position - closed_position) | abs <= closed_tolerance
+    }}
+
+action:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ is_state(master_switch, 'off') or is_state(local_switch, 'off') }}
+        sequence:
+          - stop: "Sonnenschutz deaktiviert"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ is_fully_closed }}"
+        sequence:
+          - stop: "Rollo ist komplett geschlossen"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ is_state(window_contact, 'on') }}"
+        sequence:
+          - action: cover.set_cover_position
+            data:
+              entity_id: "{{ cover_entity }}"
+              position: "{{ open_position }}"
+
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ has_awning and not is_state(awning, 'closed') }}
+        sequence:
+          - action: cover.set_cover_position
+            data:
+              entity_id: "{{ cover_entity }}"
+              position: "{{ open_position }}"
+
+      - conditions:
+          - condition: template
+            value_template: >
+              {{
+                is_state(sun_active, 'on')
+                and is_state(sun_in_front, 'on')
+                and is_state(window_contact, 'off')
+                and (not has_awning or is_state(awning, 'closed'))
+              }}
+        sequence:
+          - action: cover.set_cover_position
+            data:
+              entity_id: "{{ cover_entity }}"
+              position: "{{ ventilation_position }}"
+
+    default:
+      - action: cover.set_cover_position
+        data:
+          entity_id: "{{ cover_entity }}"
+          position: "{{ open_position }}"
