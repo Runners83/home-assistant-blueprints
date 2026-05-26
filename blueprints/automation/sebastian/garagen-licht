@@ -1,0 +1,68 @@
+blueprint:
+  name: Garagenlicht bei Tor/Tür mit Auto-Aus
+  description: Schaltet Garagenlicht bei offenem Tor/Tür oder manueller Einschaltung ein und nach einstellbarer Zeit wieder aus.
+  domain: automation
+  input:
+    open_sensors:
+      name: Tor-/Türsensoren
+      description: Sensoren, die bei offenem Tor/Tür auf "on" gehen.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+    garage_light:
+      name: Garagenlicht
+      selector:
+        entity:
+          domain:
+            - light
+            - switch
+
+    max_on_time:
+      name: Maximale Einschaltdauer
+      default:
+        minutes: 20
+      selector:
+        duration:
+
+    off_after_closed:
+      name: Ausschalten, wenn alles geschlossen ist
+      default:
+        minutes: 1
+      selector:
+        duration:
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  sensors: !input open_sensors
+
+triggers:
+  - trigger: state
+    entity_id: !input open_sensors
+    to: "on"
+  - trigger: state
+    entity_id: !input garage_light
+    to: "on"
+
+actions:
+  - action: homeassistant.turn_on
+    target:
+      entity_id: !input garage_light
+
+  - wait_for_trigger:
+      - trigger: template
+        value_template: >
+          {{ expand(sensors)
+             | selectattr('state', 'eq', 'on')
+             | list
+             | count == 0 }}
+        for: !input off_after_closed
+    timeout: !input max_on_time
+    continue_on_timeout: true
+
+  - action: homeassistant.turn_off
+    target:
+      entity_id: !input garage_light
