@@ -1,6 +1,5 @@
 blueprint:
-  name: Garage - Hauptlicht und Zusatzleuchten
-  description: Hauptlicht bei Tür/Tor oder manuell. Zusatzleuchten bei Tür/Tor oder Bewegung nur bei Dunkelheit.
+  name: Garage - Hauptlicht und Zusatzleuchten bei Dunkelheit
   domain: automation
   input:
     open_sensors:
@@ -66,49 +65,60 @@ mode: restart
 max_exceeded: silent
 
 variables:
-  open_sensors: !input open_sensors
-  motion_sensor: !input motion_sensor
   lux_sensor: !input lux_sensor
   lux_threshold: !input lux_threshold
 
 trigger:
   - platform: state
     entity_id: !input open_sensors
+    id: door
 
   - platform: state
     entity_id: !input main_light
     to: "on"
+    id: manual_main
 
   - platform: state
     entity_id: !input motion_sensor
     to: "on"
+    id: motion
 
 action:
   - choose:
       - conditions:
+          - condition: trigger
+            id: door
           - condition: template
             value_template: >
-              {{ trigger.entity_id in open_sensors
-                 and trigger.to_state is not none
-                 and (trigger.to_state.state | lower) not in ['off', 'closed', '0', 'unavailable', 'unknown'] }}
+              {{ trigger.to_state is not none and
+                 (trigger.to_state.state | lower) not in
+                 ['off', 'closed', '0', 'unavailable', 'unknown'] }}
         sequence:
-          - service: homeassistant.turn_on
-            target:
-              entity_id: !input main_light
+          - parallel:
+              - sequence:
+                  - service: homeassistant.turn_on
+                    target:
+                      entity_id: !input main_light
+                  - delay: !input main_max_on_time
+                  - service: homeassistant.turn_off
+                    target:
+                      entity_id: !input main_light
 
-          - if:
-              - condition: template
-                value_template: >
-                  {{ (states(lux_sensor) | float(9999)) < lux_threshold }}
-            then:
-              - service: homeassistant.turn_on
-                target:
-                  entity_id: !input extra_lights
+              - sequence:
+                  - condition: template
+                    value_template: >
+                      {{ (states(lux_sensor) | float(9999)) < lux_threshold }}
+                  - service: homeassistant.turn_on
+                    target:
+                      entity_id: !input extra_lights
+                  - delay: !input extra_on_time
+                  - service: homeassistant.turn_off
+                    target:
+                      entity_id: !input extra_lights
 
       - conditions:
-          - condition: template
-            value_template: >
-              {{ trigger.entity_id == motion_sensor }}
+          - condition: trigger
+            id: motion
           - condition: template
             value_template: >
               {{ (states(lux_sensor) | float(9999)) < lux_threshold }}
@@ -116,32 +126,20 @@ action:
           - service: homeassistant.turn_on
             target:
               entity_id: !input extra_lights
-
-      - conditions:
-          - condition: template
-            value_template: >
-              {{ trigger.entity_id == expand([!input main_light])[0].entity_id }}
-        sequence:
-          - service: homeassistant.turn_on
-            target:
-              entity_id: !input main_light
-
-  - parallel:
-      - sequence:
-          - delay: !input main_max_on_time
-          - service: homeassistant.turn_off
-            target:
-              entity_id: !input main_light
-
-      - sequence:
           - wait_for_trigger:
               - platform: state
                 entity_id: !input motion_sensor
                 to: "off"
                 for: !input extra_on_time
-            timeout: !input extra_on_time
-            continue_on_timeout: true
-
           - service: homeassistant.turn_off
             target:
               entity_id: !input extra_lights
+
+      - conditions:
+          - condition: trigger
+            id: manual_main
+        sequence:
+          - delay: !input main_max_on_time
+          - service: homeassistant.turn_off
+            target:
+              entity_id: !input main_light
