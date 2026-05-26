@@ -1,0 +1,180 @@
+blueprint:
+  name: Garagentor WLED Status + Spots über Helligkeitssensor
+  description: Steuert WLED-Presets anhand eines frei wählbaren Garagentor-Sensors, Bewegung, unbekannter Position und Dunkelheit.
+  domain: automation
+
+  input:
+    garage_sensor:
+      name: Garagentor Sensor
+      description: Beliebige Entity, z. B. Sensor, Binary Sensor oder Cover.
+      selector:
+        entity: {}
+
+    wled_preset_select:
+      name: WLED Preset Select Entity
+      selector:
+        entity:
+          domain: select
+
+    brightness_sensor:
+      name: Helligkeitssensor
+      description: Lux-Sensor für Dunkelheit.
+      selector:
+        entity:
+          domain: sensor
+          device_class: illuminance
+
+    lux_threshold:
+      name: Dunkel ab Lux-Wert
+      default: 20
+      selector:
+        number:
+          min: 0
+          max: 500
+          step: 1
+          unit_of_measurement: lx
+
+    preset_closed:
+      name: Preset geschlossen
+      default: "Aus"
+      selector:
+        text:
+
+    preset_unknown:
+      name: Preset unbekannt
+      default: "Unbekannt"
+      selector:
+        text:
+
+    preset_open:
+      name: Preset geöffnet / Grün
+      default: "Grün"
+      selector:
+        text:
+
+    preset_moving:
+      name: Preset Bewegung / rotes Lauflicht
+      default: "Rot Lauflicht"
+      selector:
+        text:
+
+    preset_spots:
+      name: Preset Spots bei Dunkelheit
+      default: "Spots"
+      selector:
+        text:
+
+    spots_end_time:
+      name: Spots ausschalten um
+      default: "23:00:00"
+      selector:
+        time:
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input garage_sensor
+
+  - platform: numeric_state
+    entity_id: !input brightness_sensor
+    below: !input lux_threshold
+
+  - platform: numeric_state
+    entity_id: !input brightness_sensor
+    above: !input lux_threshold
+
+  - platform: time
+    at: !input spots_end_time
+
+  - platform: homeassistant
+    event: start
+
+variables:
+  garage_sensor: !input garage_sensor
+  brightness_sensor: !input brightness_sensor
+  lux_threshold: !input lux_threshold
+  spots_end_time: !input spots_end_time
+
+  preset_closed: !input preset_closed
+  preset_unknown: !input preset_unknown
+  preset_open: !input preset_open
+  preset_moving: !input preset_moving
+  preset_spots: !input preset_spots
+
+  garage_state: "{{ states(garage_sensor) }}"
+  lux_value: "{{ states(brightness_sensor) | float(9999) }}"
+
+  is_dark: "{{ lux_value < lux_threshold }}"
+  before_spots_end: "{{ now().strftime('%H:%M:%S') < spots_end_time }}"
+
+  is_closed: >
+    {{ garage_state in ['closed', 'off', 'zu', 'geschlossen'] }}
+
+  is_open: >
+    {{ garage_state in ['open', 'on', 'offen'] }}
+
+  is_moving: >
+    {{ garage_state in ['opening', 'closing', 'moving', 'öffnend', 'schließend', 'in_bewegung'] }}
+
+  is_unknown: >
+    {{ garage_state in ['unknown', 'unavailable', 'none', 'position_unknown'] }}
+
+action:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_moving }}"
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input wled_preset_select
+            data:
+              option: "{{ preset_moving }}"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ is_open }}"
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input wled_preset_select
+            data:
+              option: "{{ preset_open }}"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ is_closed and is_dark and before_spots_end }}"
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input wled_preset_select
+            data:
+              option: "{{ preset_spots }}"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ is_closed }}"
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input wled_preset_select
+            data:
+              option: "{{ preset_closed }}"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ is_unknown }}"
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input wled_preset_select
+            data:
+              option: "{{ preset_unknown }}"
+
+    default:
+      - service: select.select_option
+        target:
+          entity_id: !input wled_preset_select
+        data:
+          option: "{{ preset_unknown }}"
