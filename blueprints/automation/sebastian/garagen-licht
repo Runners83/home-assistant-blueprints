@@ -8,7 +8,6 @@ blueprint:
       description: Sensoren, die bei offenem Tor/Tür auf "on" gehen.
       selector:
         entity:
-          domain: binary_sensor
           multiple: true
 
     garage_light:
