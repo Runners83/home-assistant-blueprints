@@ -1,5 +1,6 @@
 blueprint:
-  name: Garage - Licht mit Zusatzleuchten bei Dunkelheit
+  name: Garage - Hauptlicht und Zusatzleuchten
+  description: Hauptlicht bei Tür/Tor oder manuell. Zusatzleuchten bei Tür/Tor oder Bewegung nur bei Dunkelheit.
   domain: automation
   input:
     open_sensors:
@@ -17,13 +18,19 @@ blueprint:
             - switch
 
     extra_lights:
-      name: Zusatzleuchten bei Dunkelheit
+      name: Zusatzleuchten
       selector:
         entity:
           domain:
             - light
             - switch
           multiple: true
+
+    motion_sensor:
+      name: Bewegungsmelder für Zusatzleuchten
+      selector:
+        entity:
+          domain: binary_sensor
 
     lux_sensor:
       name: Helligkeitssensor
@@ -49,7 +56,7 @@ blueprint:
         duration:
 
     extra_on_time:
-      name: Zusatzleuchten Einschaltdauer
+      name: Zusatzleuchten Nachlaufzeit
       default:
         minutes: 3
       selector:
@@ -60,43 +67,81 @@ max_exceeded: silent
 
 variables:
   open_sensors: !input open_sensors
+  motion_sensor: !input motion_sensor
   lux_sensor: !input lux_sensor
   lux_threshold: !input lux_threshold
 
 trigger:
   - platform: state
     entity_id: !input open_sensors
+
   - platform: state
     entity_id: !input main_light
     to: "on"
 
-condition:
-  - condition: template
-    value_template: >
-      {{ trigger.entity_id not in open_sensors
-         or (trigger.to_state is not none
-         and (trigger.to_state.state | lower) not in ['off', 'closed', '0', 'unavailable', 'unknown']) }}
+  - platform: state
+    entity_id: !input motion_sensor
+    to: "on"
 
 action:
-  - parallel:
-      - sequence:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ trigger.entity_id in open_sensors
+                 and trigger.to_state is not none
+                 and (trigger.to_state.state | lower) not in ['off', 'closed', '0', 'unavailable', 'unknown'] }}
+        sequence:
           - service: homeassistant.turn_on
             target:
               entity_id: !input main_light
+
+          - if:
+              - condition: template
+                value_template: >
+                  {{ (states(lux_sensor) | float(9999)) < lux_threshold }}
+            then:
+              - service: homeassistant.turn_on
+                target:
+                  entity_id: !input extra_lights
+
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ trigger.entity_id == motion_sensor }}
+          - condition: template
+            value_template: >
+              {{ (states(lux_sensor) | float(9999)) < lux_threshold }}
+        sequence:
+          - service: homeassistant.turn_on
+            target:
+              entity_id: !input extra_lights
+
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ trigger.entity_id == expand([!input main_light])[0].entity_id }}
+        sequence:
+          - service: homeassistant.turn_on
+            target:
+              entity_id: !input main_light
+
+  - parallel:
+      - sequence:
           - delay: !input main_max_on_time
           - service: homeassistant.turn_off
             target:
               entity_id: !input main_light
 
       - sequence:
-          - condition: template
-            value_template: >
-              {{ trigger.entity_id in open_sensors
-                 and (states(lux_sensor) | float(9999)) < lux_threshold }}
-          - service: homeassistant.turn_on
-            target:
-              entity_id: !input extra_lights
-          - delay: !input extra_on_time
+          - wait_for_trigger:
+              - platform: state
+                entity_id: !input motion_sensor
+                to: "off"
+                for: !input extra_on_time
+            timeout: !input extra_on_time
+            continue_on_timeout: true
+
           - service: homeassistant.turn_off
             target:
               entity_id: !input extra_lights
