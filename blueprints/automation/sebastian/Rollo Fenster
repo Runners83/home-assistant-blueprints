@@ -1,0 +1,200 @@
+blueprint:
+  name: Rollo Fenster-Schutz + Helligkeit + Uhrzeit + Schalter
+  description: Öffnet das Rollo beim Fensteröffnen, stellt wieder her und schließt bei Dunkelheit oder Uhrzeit. Über einen Schalter kann alles deaktiviert werden.
+  domain: automation
+
+  input:
+    automation_enabled:
+      name: Automatisierung aktiv
+      description: Schalterhelfer. Wenn aus, fährt nichts automatisch hoch oder runter.
+      selector:
+        entity:
+          domain: input_boolean
+
+    window_sensor:
+      name: Fensterkontakt
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: window
+
+    cover_entity:
+      name: Rollo / Rollladen
+      selector:
+        entity:
+          domain: cover
+
+    open_position:
+      name: Position bei geöffnetem Fenster
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    closed_threshold:
+      name: Nur hochfahren, wenn Rollo unter dieser Position ist
+      default: 20
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    close_position:
+      name: Position beim automatischen Zufahren
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    enable_light_close:
+      name: Bei Dunkelheit schließen
+      default: true
+      selector:
+        boolean: {}
+
+    light_sensor:
+      name: Lichtsensor
+      selector:
+        entity:
+          domain: sensor
+
+    light_threshold:
+      name: Helligkeit unter diesem Wert schließen
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 1
+
+    enable_time_close:
+      name: Zu Uhrzeit schließen
+      default: true
+      selector:
+        boolean: {}
+
+    close_time:
+      name: Uhrzeit zum Schließen
+      default: "22:00:00"
+      selector:
+        time: {}
+
+mode: restart
+
+variables:
+  cover_entity: !input cover_entity
+  window_sensor: !input window_sensor
+  light_sensor: !input light_sensor
+  light_threshold: !input light_threshold
+  open_position: !input open_position
+  closed_threshold: !input closed_threshold
+  close_position: !input close_position
+  enable_light_close: !input enable_light_close
+  enable_time_close: !input enable_time_close
+  snapshot_scene: "rollo_fenster_snapshot_{{ this.entity_id | replace('.', '_') }}"
+
+trigger:
+  - platform: state
+    entity_id: !input window_sensor
+    to: "on"
+    id: window_opened
+
+  - platform: state
+    entity_id: !input window_sensor
+    to: "off"
+    id: window_closed
+
+  - platform: numeric_state
+    entity_id: !input light_sensor
+    below: !input light_threshold
+    id: light_low
+
+  - platform: time
+    at: !input close_time
+    id: time_close
+
+condition:
+  - condition: state
+    entity_id: !input automation_enabled
+    state: "on"
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: window_opened
+        sequence:
+          - service: scene.create
+            data:
+              scene_id: "{{ snapshot_scene }}"
+              snapshot_entities:
+                - "{{ cover_entity }}"
+
+          - condition: template
+            value_template: >
+              {{ state_attr(cover_entity, 'current_position') | int(0) <= closed_threshold }}
+
+          - service: cover.set_cover_position
+            target:
+              entity_id: "{{ cover_entity }}"
+            data:
+              position: "{{ open_position }}"
+
+      - conditions:
+          - condition: trigger
+            id: window_closed
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ enable_light_close and
+                         states(light_sensor) | float(999999) < light_threshold | float }}
+                sequence:
+                  - service: cover.set_cover_position
+                    target:
+                      entity_id: "{{ cover_entity }}"
+                    data:
+                      position: "{{ close_position }}"
+            default:
+              - service: scene.turn_on
+                target:
+                  entity_id: "scene.{{ snapshot_scene }}"
+
+      - conditions:
+          - condition: trigger
+            id: light_low
+          - condition: template
+            value_template: "{{ enable_light_close }}"
+          - condition: state
+            entity_id: !input window_sensor
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: "{{ cover_entity }}"
+            data:
+              position: "{{ close_position }}"
+
+      - conditions:
+          - condition: trigger
+            id: time_close
+          - condition: template
+            value_template: "{{ enable_time_close }}"
+          - condition: state
+            entity_id: !input window_sensor
+            state: "off"
+        sequence:
+          - service: cover.set_cover_position
+            target:
+              entity_id: "{{ cover_entity }}"
+            data:
+              position: "{{ close_position }}"
