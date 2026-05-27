@@ -1,0 +1,105 @@
+blueprint:
+  name: Außenlicht bei Personenerkennung
+  description: Schaltet Licht bei Personenerkennung ein, nur wenn es dunkel genug ist. Mit Nachlaufzeit und manuellem Override.
+  domain: automation
+
+  input:
+    person_sensors:
+      name: Personensensoren
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+    target_lights:
+      name: Licht(er)
+      selector:
+        target:
+          entity:
+            domain: light
+
+    brightness_sensor:
+      name: Helligkeitssensor
+      selector:
+        entity:
+          domain: sensor
+
+    lux_threshold:
+      name: Helligkeitsschwellwert
+      default: 50
+      selector:
+        number:
+          min: 0
+          max: 500
+          step: 1
+          unit_of_measurement: lx
+
+    delay_time:
+      name: Nachlaufzeit
+      default:
+        minutes: 3
+      selector:
+        duration:
+
+    manual_override:
+      name: Manueller Override
+      description: Wenn dieser Schalter an ist, wird das Licht nicht automatisch ausgeschaltet.
+      default: []
+      selector:
+        entity:
+          domain: input_boolean
+
+    keep_if_already_on:
+      name: Licht anlassen, wenn es vorher schon an war
+      default: true
+      selector:
+        boolean:
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input person_sensors
+    to: "on"
+
+condition:
+  - condition: numeric_state
+    entity_id: !input brightness_sensor
+    below: !input lux_threshold
+
+variables:
+  target_lights: !input target_lights
+  manual_override: !input manual_override
+  keep_if_already_on: !input keep_if_already_on
+
+action:
+  - variables:
+      was_on: >
+        {{ expand(target_lights.entity_id | default([]))
+           | selectattr('state','eq','on')
+           | list
+           | count > 0 }}
+
+  - service: light.turn_on
+    target: !input target_lights
+
+  - wait_template: >
+      {{ expand(!input person_sensors)
+         | selectattr('state','eq','on')
+         | list
+         | count == 0 }}
+    timeout: "00:30:00"
+    continue_on_timeout: true
+
+  - delay: !input delay_time
+
+  - condition: template
+    value_template: >
+      {{ not keep_if_already_on or not was_on }}
+
+  - condition: template
+    value_template: >
+      {{ manual_override == [] or is_state(manual_override, 'off') }}
+
+  - service: light.turn_off
+    target: !input target_lights
