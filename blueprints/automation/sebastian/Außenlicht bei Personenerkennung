@@ -1,32 +1,45 @@
 blueprint:
-  name: Außenlicht bei Personenerkennung
-  description: Schaltet Licht bei Personenerkennung ein, nur wenn es dunkel genug ist. Mit Nachlaufzeit und manuellem Override.
+  name: Garage - Hauptlicht und Zusatzleuchten ohne Templates
   domain: automation
-
   input:
-    person_sensors:
-      name: Personensensoren
+    open_sensors:
+      name: Tür-/Torsensoren
+      selector:
+        entity:
+          multiple: true
+
+    main_light:
+      name: Hauptlicht Garage
+      selector:
+        entity:
+          domain:
+            - light
+            - switch
+
+    extra_lights:
+      name: Zusatzleuchten
+      selector:
+        entity:
+          domain:
+            - light
+            - switch
+          multiple: true
+
+    motion_sensor:
+      name: Bewegungsmelder
       selector:
         entity:
           domain: binary_sensor
-          multiple: true
 
-    target_lights:
-      name: Licht(er)
-      selector:
-        target:
-          entity:
-            domain: light
-
-    brightness_sensor:
+    lux_sensor:
       name: Helligkeitssensor
       selector:
         entity:
           domain: sensor
 
     lux_threshold:
-      name: Helligkeitsschwellwert
-      default: 50
+      name: Helligkeitsschwellenwert
+      default: 30
       selector:
         number:
           min: 0
@@ -34,72 +47,98 @@ blueprint:
           step: 1
           unit_of_measurement: lx
 
-    delay_time:
-      name: Nachlaufzeit
+    main_on_time:
+      name: Hauptlicht Einschaltdauer
+      default:
+        minutes: 20
+      selector:
+        duration:
+
+    extra_on_time:
+      name: Zusatzleuchten Nachlaufzeit
       default:
         minutes: 3
       selector:
         duration:
 
-    manual_override:
-      name: Manueller Override
-      description: Wenn dieser Schalter an ist, wird das Licht nicht automatisch ausgeschaltet.
-      default: []
-      selector:
-        entity:
-          domain: input_boolean
-
-    keep_if_already_on:
-      name: Licht anlassen, wenn es vorher schon an war
-      default: true
-      selector:
-        boolean:
-
-mode: restart
+mode: parallel
+max: 10
 
 trigger:
   - platform: state
-    entity_id: !input person_sensors
+    entity_id: !input open_sensors
     to: "on"
+    id: door
 
-condition:
-  - condition: numeric_state
-    entity_id: !input brightness_sensor
-    below: !input lux_threshold
+  - platform: state
+    entity_id: !input open_sensors
+    to: "open"
+    id: door
 
-variables:
-  target_lights: !input target_lights
-  manual_override: !input manual_override
-  keep_if_already_on: !input keep_if_already_on
+  - platform: state
+    entity_id: !input open_sensors
+    to: "opened"
+    id: door
+
+  - platform: state
+    entity_id: !input motion_sensor
+    to: "on"
+    id: motion
+
+  - platform: state
+    entity_id: !input main_light
+    to: "on"
+    id: manual
 
 action:
-  - variables:
-      was_on: >
-        {{ expand(target_lights.entity_id | default([]))
-           | selectattr('state','eq','on')
-           | list
-           | count > 0 }}
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: door
+        sequence:
+          - service: homeassistant.turn_on
+            target:
+              entity_id: !input main_light
 
-  - service: light.turn_on
-    target: !input target_lights
+          - if:
+              - condition: numeric_state
+                entity_id: !input lux_sensor
+                below: !input lux_threshold
+            then:
+              - service: homeassistant.turn_on
+                target:
+                  entity_id: !input extra_lights
+              - delay: !input extra_on_time
+              - service: homeassistant.turn_off
+                target:
+                  entity_id: !input extra_lights
 
-  - wait_template: >
-      {{ expand(!input person_sensors)
-         | selectattr('state','eq','on')
-         | list
-         | count == 0 }}
-    timeout: "00:30:00"
-    continue_on_timeout: true
+          - delay: !input main_on_time
+          - service: homeassistant.turn_off
+            target:
+              entity_id: !input main_light
 
-  - delay: !input delay_time
+      - conditions:
+          - condition: trigger
+            id: motion
+          - condition: numeric_state
+            entity_id: !input lux_sensor
+            below: !input lux_threshold
+        sequence:
+          - service: homeassistant.turn_on
+            target:
+              entity_id: !input extra_lights
+          - delay: !input extra_on_time
+          - service: homeassistant.turn_off
+            target:
+              entity_id: !input extra_lights
 
-  - condition: template
-    value_template: >
-      {{ not keep_if_already_on or not was_on }}
+      - conditions:
+          - condition: trigger
+            id: manual
+        sequence:
+          - delay: !input main_on_time
+          - service: homeassistant.turn_off
+            target:
+              entity_id: !input main_light
 
-  - condition: template
-    value_template: >
-      {{ manual_override == [] or is_state(manual_override, 'off') }}
-
-  - service: light.turn_off
-    target: !input target_lights
