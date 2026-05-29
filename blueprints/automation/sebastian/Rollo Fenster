@@ -1,64 +1,35 @@
 blueprint:
-  name: Rollo Fenster-Schutz + Helligkeit + Uhrzeit + Schalter
-  description: Öffnet das Rollo beim Fensteröffnen, stellt wieder her und schließt bei Dunkelheit oder Uhrzeit. Über einen Schalter kann alles deaktiviert werden.
+  name: Basis Rollo Fenster Nacht ohne Morgen-Auto
+  description: >
+    Fenster auf fährt Rollo hoch. Beim Schließen wird je nach Dunkelheit,
+    Morgenfreigabe oder vorherigem Zustand entschieden. Abends kann automatisch
+    geschlossen werden. Morgens wird NICHT automatisch geöffnet.
   domain: automation
 
   input:
-    automation_enabled:
-      name: Automatisierung aktiv
-      description: Schalterhelfer. Wenn aus, fährt nichts automatisch hoch oder runter.
+    master_switch:
+      name: Master-Schalter Automatik
       selector:
         entity:
           domain: input_boolean
 
-    window_sensor:
-      name: Fensterkontakt
+    local_switch:
+      name: Schalter für dieses Rollo
       selector:
         entity:
-          domain: binary_sensor
-          device_class: window
+          domain: input_boolean
 
     cover_entity:
-      name: Rollo / Rollladen
+      name: Rollo
       selector:
         entity:
           domain: cover
 
-    open_position:
-      name: Position bei geöffnetem Fenster
-      default: 100
+    window_contact:
+      name: Fensterkontakt
       selector:
-        number:
-          min: 0
-          max: 100
-          step: 1
-          unit_of_measurement: "%"
-
-    closed_threshold:
-      name: Nur hochfahren, wenn Rollo unter dieser Position ist
-      default: 20
-      selector:
-        number:
-          min: 0
-          max: 100
-          step: 1
-          unit_of_measurement: "%"
-
-    close_position:
-      name: Position beim automatischen Zufahren
-      default: 0
-      selector:
-        number:
-          min: 0
-          max: 100
-          step: 1
-          unit_of_measurement: "%"
-
-    enable_light_close:
-      name: Bei Dunkelheit schließen
-      default: true
-      selector:
-        boolean: {}
+        entity:
+          domain: binary_sensor
 
     light_sensor:
       name: Lichtsensor
@@ -66,8 +37,23 @@ blueprint:
         entity:
           domain: sensor
 
-    light_threshold:
-      name: Helligkeit unter diesem Wert schließen
+    evening_close_mode:
+      name: Abend-Schließen
+      default: light
+      selector:
+        select:
+          options:
+            - label: Aus
+              value: "off"
+            - label: Nach Helligkeit
+              value: "light"
+            - label: Nach Uhrzeit
+              value: "time"
+            - label: Helligkeit oder Uhrzeit
+              value: "both"
+
+    evening_light_threshold:
+      name: Abend schließen unter Lux
       default: 5
       selector:
         number:
@@ -75,56 +61,105 @@ blueprint:
           max: 100000
           step: 1
 
-    enable_time_close:
-      name: Zu Uhrzeit schließen
-      default: true
-      selector:
-        boolean: {}
-
-    close_time:
-      name: Uhrzeit zum Schließen
+    evening_close_time:
+      name: Abend-Schließzeit
       default: "22:00:00"
       selector:
         time: {}
 
-mode: restart
+    morning_time:
+      name: Morgenfreigabe ab Uhrzeit
+      description: Nur für Entscheidung beim Fensterschließen. Fährt NICHT automatisch hoch.
+      default: "07:00:00"
+      selector:
+        time: {}
 
-variables:
-  cover_entity: !input cover_entity
-  window_sensor: !input window_sensor
-  light_sensor: !input light_sensor
-  light_threshold: !input light_threshold
-  open_position: !input open_position
-  closed_threshold: !input closed_threshold
-  close_position: !input close_position
-  enable_light_close: !input enable_light_close
-  enable_time_close: !input enable_time_close
-  snapshot_scene: "rollo_fenster_snapshot_{{ this.entity_id | replace('.', '_') }}"
+    morning_light_threshold:
+      name: Morgenfreigabe über Lux
+      description: Nur für Entscheidung beim Fensterschließen. Fährt NICHT automatisch hoch.
+      default: 20
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 1
+
+    has_separate_sun_protection:
+      name: Dieses Rollo hat separate Sonnenschutz-Automation
+      default: false
+      selector:
+        boolean: {}
+
+    open_position:
+      name: Offen-Position
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+
+    closed_position:
+      name: Geschlossen-Position / Nachtposition
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+
+mode: restart
 
 trigger:
   - platform: state
-    entity_id: !input window_sensor
+    entity_id: !input window_contact
     to: "on"
     id: window_opened
 
   - platform: state
-    entity_id: !input window_sensor
+    entity_id: !input window_contact
     to: "off"
     id: window_closed
 
   - platform: numeric_state
     entity_id: !input light_sensor
-    below: !input light_threshold
-    id: light_low
+    below: !input evening_light_threshold
+    id: evening_dark
 
   - platform: time
-    at: !input close_time
-    id: time_close
+    at: !input evening_close_time
+    id: evening_time
+
+variables:
+  master_switch: !input master_switch
+  local_switch: !input local_switch
+  cover_entity: !input cover_entity
+  light_sensor: !input light_sensor
+
+  evening_close_mode: !input evening_close_mode
+  evening_light_threshold: !input evening_light_threshold
+
+  morning_time: !input morning_time
+  morning_light_threshold: !input morning_light_threshold
+  has_separate_sun_protection: !input has_separate_sun_protection
+
+  open_position: !input open_position
+  closed_position: !input closed_position
+
+  current_light: "{{ states(light_sensor) | float(999999) }}"
+  is_dark: "{{ current_light < evening_light_threshold | float }}"
+  is_morning_released: >
+    {{
+      current_light > morning_light_threshold | float
+      and now().strftime('%H:%M:%S') >= morning_time
+    }}
+
+  snapshot_scene: "rollo_snapshot_{{ this.entity_id | replace('.', '_') }}"
 
 condition:
-  - condition: state
-    entity_id: !input automation_enabled
-    state: "on"
+  - condition: template
+    value_template: >
+      {{ is_state(master_switch, 'on') and is_state(local_switch, 'on') }}
 
 action:
   - choose:
@@ -137,10 +172,6 @@ action:
               scene_id: "{{ snapshot_scene }}"
               snapshot_entities:
                 - "{{ cover_entity }}"
-
-          - condition: template
-            value_template: >
-              {{ state_attr(cover_entity, 'current_position') | int(0) <= closed_threshold }}
 
           - service: cover.set_cover_position
             target:
@@ -155,46 +186,60 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: >
-                      {{ enable_light_close and
-                         states(light_sensor) | float(999999) < light_threshold | float }}
+                    value_template: "{{ is_dark }}"
                 sequence:
                   - service: cover.set_cover_position
                     target:
                       entity_id: "{{ cover_entity }}"
                     data:
-                      position: "{{ close_position }}"
+                      position: "{{ closed_position }}"
+
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_morning_released and has_separate_sun_protection }}"
+                sequence:
+                  - stop: "Morgenfreigabe aktiv, separate Sonnenschutz-Automation darf übernehmen"
+
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_morning_released }}"
+                sequence:
+                  - stop: "Morgenfreigabe aktiv, Rollo bleibt oben"
+
             default:
+              - condition: template
+                value_template: >
+                  {{ states('scene.' ~ snapshot_scene) not in ['unknown', 'unavailable'] }}
               - service: scene.turn_on
                 target:
                   entity_id: "scene.{{ snapshot_scene }}"
 
       - conditions:
           - condition: trigger
-            id: light_low
+            id: evening_dark
           - condition: template
-            value_template: "{{ enable_light_close }}"
+            value_template: "{{ evening_close_mode in ['light', 'both'] }}"
           - condition: state
-            entity_id: !input window_sensor
+            entity_id: !input window_contact
             state: "off"
         sequence:
           - service: cover.set_cover_position
             target:
               entity_id: "{{ cover_entity }}"
             data:
-              position: "{{ close_position }}"
+              position: "{{ closed_position }}"
 
       - conditions:
           - condition: trigger
-            id: time_close
+            id: evening_time
           - condition: template
-            value_template: "{{ enable_time_close }}"
+            value_template: "{{ evening_close_mode in ['time', 'both'] }}"
           - condition: state
-            entity_id: !input window_sensor
+            entity_id: !input window_contact
             state: "off"
         sequence:
           - service: cover.set_cover_position
             target:
               entity_id: "{{ cover_entity }}"
             data:
-              position: "{{ close_position }}"
+              position: "{{ closed_position }}"
