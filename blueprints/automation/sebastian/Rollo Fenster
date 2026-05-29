@@ -13,12 +13,6 @@ blueprint:
         entity:
           domain: input_boolean
 
-    local_switch:
-      name: Schalter für dieses Rollo
-      selector:
-        entity:
-          domain: input_boolean
-
     cover_entity:
       name: Rollo
       selector:
@@ -86,6 +80,7 @@ blueprint:
 
     has_separate_sun_protection:
       name: Dieses Rollo hat separate Sonnenschutz-Automation
+      description: Nur bei den Rollos aktivieren, die zusätzlich deine Sonnenschutz-Blueprint nutzen.
       default: false
       selector:
         boolean: {}
@@ -132,7 +127,6 @@ trigger:
 
 variables:
   master_switch: !input master_switch
-  local_switch: !input local_switch
   cover_entity: !input cover_entity
   light_sensor: !input light_sensor
 
@@ -147,7 +141,10 @@ variables:
   closed_position: !input closed_position
 
   current_light: "{{ states(light_sensor) | float(999999) }}"
-  is_dark: "{{ current_light < evening_light_threshold | float }}"
+
+  is_dark: >
+    {{ current_light < evening_light_threshold | float }}
+
   is_morning_released: >
     {{
       current_light > morning_light_threshold | float
@@ -159,7 +156,7 @@ variables:
 condition:
   - condition: template
     value_template: >
-      {{ is_state(master_switch, 'on') and is_state(local_switch, 'on') }}
+      {{ is_state(master_switch, 'on') }}
 
 action:
   - choose:
