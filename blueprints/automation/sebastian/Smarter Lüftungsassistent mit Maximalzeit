@@ -1,0 +1,206 @@
+blueprint:
+  name: Smarter Lüftungsassistent mit Maximalzeit
+  description: >
+    Pro Raum nutzbarer Lüftungsassistent. Benachrichtigt per Notify/Pushover,
+    wenn Lüften ausreichend war, kontraproduktiv wird oder die maximale Lüftungsdauer erreicht ist.
+  domain: automation
+
+  input:
+    room_name:
+      name: Raumname
+      selector:
+        text:
+
+    window_sensor:
+      name: Fensterkontakt
+      selector:
+        entity:
+          domain: binary_sensor
+
+    indoor_temperature:
+      name: Raumtemperatur
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    indoor_humidity:
+      name: Raum-Luftfeuchtigkeit
+      selector:
+        entity:
+          domain: sensor
+          device_class: humidity
+
+    outdoor_temperature:
+      name: Außentemperatur
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    outdoor_humidity:
+      name: Außen-Luftfeuchtigkeit
+      selector:
+        entity:
+          domain: sensor
+          device_class: humidity
+
+    notify_service:
+      name: Notify-Service
+      description: Zum Beispiel notify.pushover
+      default: notify.pushover
+      selector:
+        text:
+
+    target_humidity:
+      name: Ziel-Luftfeuchte
+      default: 55
+      selector:
+        number:
+          min: 35
+          max: 70
+          step: 1
+          unit_of_measurement: "%"
+
+    min_humidity_drop:
+      name: Mindest-Feuchteabfall
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 20
+          step: 1
+          unit_of_measurement: "%"
+
+    min_open_time:
+      name: Erste Prüfung nach
+      default:
+        minutes: 5
+      selector:
+        duration:
+
+    check_interval:
+      name: Prüfintervall
+      default:
+        minutes: 2
+      selector:
+        duration:
+
+    max_open_time_minutes:
+      name: Maximale Lüftungsdauer
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 120
+          step: 1
+          unit_of_measurement: "min"
+
+    temp_margin:
+      name: Temperatur-Puffer
+      description: Verhindert zu empfindliche Entscheidungen bei kleinen Temperaturunterschieden.
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.5
+          unit_of_measurement: "°C"
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input window_sensor
+    to: "on"
+
+variables:
+  room_name: !input room_name
+  window_sensor: !input window_sensor
+  indoor_temperature: !input indoor_temperature
+  indoor_humidity: !input indoor_humidity
+  outdoor_temperature: !input outdoor_temperature
+  outdoor_humidity: !input outdoor_humidity
+  notify_service: !input notify_service
+  target_humidity: !input target_humidity
+  min_humidity_drop: !input min_humidity_drop
+  max_open_time_minutes: !input max_open_time_minutes
+  temp_margin: !input temp_margin
+  start_humidity: "{{ states(indoor_humidity) | float(0) }}"
+  start_time: "{{ now() }}"
+
+action:
+  - delay: !input min_open_time
+
+  - repeat:
+      while:
+        - condition: state
+          entity_id: !input window_sensor
+          state: "on"
+      sequence:
+        - variables:
+            ti: "{{ states(indoor_temperature) | float(0) }}"
+            hi: "{{ states(indoor_humidity) | float(0) }}"
+            ta: "{{ states(outdoor_temperature) | float(0) }}"
+            ha: "{{ states(outdoor_humidity) | float(0) }}"
+
+            abs_in: >
+              {{ (216.7 * ((hi / 100) * 6.112 * (2.718281828 ** ((17.62 * ti) / (243.12 + ti)))) / (273.15 + ti)) | round(2) }}
+
+            abs_out: >
+              {{ (216.7 * ((ha / 100) * 6.112 * (2.718281828 ** ((17.62 * ta) / (243.12 + ta)))) / (273.15 + ta)) | round(2) }}
+
+            humidity_drop: "{{ (start_humidity - hi) | round(1) }}"
+
+            humidity_done: >
+              {{ hi <= target_humidity or humidity_drop >= min_humidity_drop }}
+
+            outside_warmer_than_inside: >
+              {{ ta > ti + temp_margin }}
+
+            outside_not_drier: >
+              {{ abs_out >= abs_in }}
+
+            ventilation_counterproductive: >
+              {{ outside_warmer_than_inside and outside_not_drier }}
+
+            open_minutes: >
+              {{ ((as_timestamp(now()) - as_timestamp(start_time)) / 60) | round(0) }}
+
+            max_time_reached: >
+              {{ open_minutes >= max_open_time_minutes }}
+
+            should_notify: >
+              {{ humidity_done or ventilation_counterproductive or max_time_reached }}
+
+            notify_reason: >
+              {% if humidity_done %}
+                Luftfeuchtigkeit ausreichend reduziert.
+              {% elif ventilation_counterproductive %}
+                Lüften wird kontraproduktiv: draußen ist es wärmer und nicht trockener als drinnen.
+              {% elif max_time_reached %}
+                Maximale Lüftungsdauer erreicht.
+              {% else %}
+                Lüften ist noch sinnvoll.
+              {% endif %}
+
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ should_notify }}"
+              sequence:
+                - action: "{{ notify_service }}"
+                  data:
+                    title: "Fenster schließen"
+                    message: >
+                      {{ room_name }}: {{ notify_reason }}
+                      Fenster ist seit ca. {{ open_minutes }} Minuten offen.
+                      Innen: {{ ti }} °C / {{ hi }} %
+                      Außen: {{ ta }} °C / {{ ha }} %
+                      Absolute Feuchte innen/außen: {{ abs_in }} / {{ abs_out }} g/m³.
+                      Feuchteänderung seit Öffnen: {{ humidity_drop }} %.
+                    data:
+                      priority: 0
+                - stop: "Benachrichtigung gesendet"
+
+        - delay: !input check_interval
