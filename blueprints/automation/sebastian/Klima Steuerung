@@ -1,13 +1,14 @@
 blueprint:
-  name: Klima mit externem Thermostat nur Kühlen
+  name: Klima externes Thermostat mit Nachtmodus
   description: >
-    Steuert eine Klimaanlage im Kühlbetrieb über einen externen Temperatursensor
-    mit Hysterese, Mindestlaufzeit, Mindestpause und Aktiv-Schalter.
+    Reine Kühlsteuerung für Klimaanlagen mit externem Temperatursensor,
+    Hysterese, Aktiv-Schalter, Nachtmodus, Tag-/Nacht-Lüfterstufe,
+    Tag-/Nacht-Mindestlaufzeit und optionalem Fensterkontakt.
   domain: automation
 
   input:
     climate_entity:
-      name: Klimagerät
+      name: Klimaanlage
       selector:
         entity:
           domain: climate
@@ -21,6 +22,12 @@ blueprint:
 
     enable_boolean:
       name: Aktiv-Schalter
+      selector:
+        entity:
+          domain: input_boolean
+
+    night_mode_boolean:
+      name: Nachtmodus-Schalter
       selector:
         entity:
           domain: input_boolean
@@ -46,7 +53,7 @@ blueprint:
           unit_of_measurement: °C
 
     ac_set_temperature:
-      name: Temperatur an der Klimaanlage
+      name: Zieltemperatur an der Klimaanlage
       default: 16
       selector:
         number:
@@ -55,8 +62,8 @@ blueprint:
           step: 1
           unit_of_measurement: °C
 
-    fan_mode:
-      name: Lüftermodus
+    day_fan_mode:
+      name: Lüftermodus am Tag
       default: high
       selector:
         select:
@@ -66,28 +73,59 @@ blueprint:
             - high
             - auto
 
-    min_run_minutes:
-      name: Mindestlaufzeit
+    night_fan_mode:
+      name: Lüftermodus nachts
+      default: low
+      selector:
+        select:
+          options:
+            - low
+            - mid
+            - high
+            - auto
+
+    day_min_run_minutes:
+      name: Mindestlaufzeit am Tag
       default: 10
       selector:
         number:
           min: 0
-          max: 120
+          max: 180
           step: 1
           unit_of_measurement: min
 
-    min_off_minutes:
-      name: Mindestpause
+    day_min_off_minutes:
+      name: Mindestpause am Tag
       default: 5
       selector:
         number:
           min: 0
-          max: 120
+          max: 180
+          step: 1
+          unit_of_measurement: min
+
+    night_min_run_minutes:
+      name: Mindestlaufzeit nachts
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 240
+          step: 1
+          unit_of_measurement: min
+
+    night_min_off_minutes:
+      name: Mindestpause nachts
+      default: 20
+      selector:
+        number:
+          min: 0
+          max: 240
           step: 1
           unit_of_measurement: min
 
     stable_for_minutes:
-      name: Temperatur muss Grenzwert so lange überschreiten
+      name: Temperatur muss Grenzwert so lange halten
       default: 2
       selector:
         number:
@@ -96,15 +134,15 @@ blueprint:
           step: 1
           unit_of_measurement: min
 
-    window_contact:
-      name: Fensterkontakt optional
+    window_contacts:
+      name: Fensterkontakte optional
       default: []
       selector:
         entity:
           domain: binary_sensor
           multiple: true
 
-mode: single
+mode: restart
 
 trigger:
   - platform: state
@@ -116,63 +154,124 @@ trigger:
     entity_id: !input enable_boolean
 
   - platform: state
-    entity_id: !input window_contact
+    entity_id: !input night_mode_boolean
+
+  - platform: state
+    entity_id: !input window_contacts
 
 variables:
   climate_entity: !input climate_entity
   temperature_sensor: !input temperature_sensor
   enable_boolean: !input enable_boolean
+  night_mode_boolean: !input night_mode_boolean
   target_temperature: !input target_temperature
   hysteresis: !input hysteresis
   ac_set_temperature: !input ac_set_temperature
-  fan_mode: !input fan_mode
-  min_run_minutes: !input min_run_minutes
-  min_off_minutes: !input min_off_minutes
-  window_contact: !input window_contact
+  day_fan_mode: !input day_fan_mode
+  night_fan_mode: !input night_fan_mode
+  day_min_run_minutes: !input day_min_run_minutes
+  day_min_off_minutes: !input day_min_off_minutes
+  night_min_run_minutes: !input night_min_run_minutes
+  night_min_off_minutes: !input night_min_off_minutes
+  window_contacts: !input window_contacts
 
   current_temp: "{{ states(temperature_sensor) | float(none) }}"
-  upper_limit: "{{ target_temperature + hysteresis }}"
-  lower_limit: "{{ target_temperature - hysteresis }}"
+  upper_limit: "{{ target_temperature | float + hysteresis | float }}"
+  lower_limit: "{{ target_temperature | float - hysteresis | float }}"
 
   enabled: "{{ is_state(enable_boolean, 'on') }}"
-  climate_is_off: "{{ states(climate_entity) == 'off' }}"
+  night_mode: "{{ is_state(night_mode_boolean, 'on') }}"
 
-  window_open: >
-    {% if window_contact | count == 0 %}
-      false
+  climate_state: "{{ states(climate_entity) }}"
+  climate_is_cooling: "{{ is_state(climate_entity, 'cool') }}"
+
+  active_fan_mode: >
+    {% if night_mode %}
+      {{ night_fan_mode }}
     {% else %}
-      {{ expand(window_contact) | selectattr('state', 'eq', 'on') | list | count > 0 }}
+      {{ day_fan_mode }}
     {% endif %}
 
-  seconds_since_climate_change: >
-    {{ (as_timestamp(now()) - as_timestamp(states[climate_entity].last_changed)) | int }}
+  active_min_run_minutes: >
+    {% if night_mode %}
+      {{ night_min_run_minutes }}
+    {% else %}
+      {{ day_min_run_minutes }}
+    {% endif %}
 
-  min_run_ok: "{{ seconds_since_climate_change >= (min_run_minutes | int * 60) }}"
-  min_off_ok: "{{ seconds_since_climate_change >= (min_off_minutes | int * 60) }}"
+  active_min_off_minutes: >
+    {% if night_mode %}
+      {{ night_min_off_minutes }}
+    {% else %}
+      {{ day_min_off_minutes }}
+    {% endif %}
+
+  window_open: >
+    {% if window_contacts | count == 0 %}
+      false
+    {% else %}
+      {{ expand(window_contacts) | selectattr('state', 'eq', 'on') | list | count > 0 }}
+    {% endif %}
+
+  seconds_since_climate_state_change: >
+    {{ (as_timestamp(now()) - as_timestamp(states[climate_entity].last_changed)) | int(0) }}
+
+  min_run_ok: >
+    {{ seconds_since_climate_state_change >= (active_min_run_minutes | int * 60) }}
+
+  min_off_ok: >
+    {{ seconds_since_climate_state_change >= (active_min_off_minutes | int * 60) }}
 
 action:
   - choose:
+      # Aus, wenn deaktiviert oder Fenster offen
       - conditions:
           - condition: template
             value_template: "{{ not enabled or window_open }}"
           - condition: template
-            value_template: "{{ not climate_is_off }}"
+            value_template: "{{ climate_state != 'off' }}"
         sequence:
-          - service: climate.turn_off
+          - service: climate.set_hvac_mode
             target:
               entity_id: !input climate_entity
+            data:
+              hvac_mode: "off"
 
+      # Ausschalten, wenn kühl genug und Mindestlaufzeit erreicht
       - conditions:
           - condition: template
             value_template: "{{ enabled }}"
           - condition: template
             value_template: "{{ not window_open }}"
           - condition: template
-            value_template: "{{ climate_is_off }}"
+            value_template: "{{ climate_is_cooling }}"
+          - condition: template
+            value_template: "{{ current_temp is not none }}"
+          - condition: template
+            value_template: "{{ current_temp <= lower_limit }}"
+          - condition: template
+            value_template: "{{ min_run_ok }}"
+        sequence:
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_entity
+            data:
+              hvac_mode: "off"
+
+      # Einschalten, wenn zu warm und Mindestpause erreicht
+      - conditions:
+          - condition: template
+            value_template: "{{ enabled }}"
+          - condition: template
+            value_template: "{{ not window_open }}"
+          - condition: template
+            value_template: "{{ not climate_is_cooling }}"
+          - condition: template
+            value_template: "{{ current_temp is not none }}"
+          - condition: template
+            value_template: "{{ current_temp >= upper_limit }}"
           - condition: template
             value_template: "{{ min_off_ok }}"
-          - condition: template
-            value_template: "{{ current_temp is not none and current_temp >= upper_limit }}"
         sequence:
           - service: climate.set_hvac_mode
             target:
@@ -180,6 +279,34 @@ action:
             data:
               hvac_mode: cool
 
+          - delay:
+              seconds: 1
+
+          - service: climate.set_temperature
+            target:
+              entity_id: !input climate_entity
+            data:
+              temperature: !input ac_set_temperature
+
+          - delay:
+              seconds: 1
+
+          - service: climate.set_fan_mode
+            target:
+              entity_id: !input climate_entity
+            data:
+              fan_mode: "{{ active_fan_mode }}"
+
+      # Wenn bereits an: Temperatur und Lüftermodus nachziehen,
+      # z. B. beim Umschalten in den Nachtmodus
+      - conditions:
+          - condition: template
+            value_template: "{{ enabled }}"
+          - condition: template
+            value_template: "{{ not window_open }}"
+          - condition: template
+            value_template: "{{ climate_is_cooling }}"
+        sequence:
           - service: climate.set_temperature
             target:
               entity_id: !input climate_entity
@@ -190,20 +317,4 @@ action:
             target:
               entity_id: !input climate_entity
             data:
-              fan_mode: !input fan_mode
-
-      - conditions:
-          - condition: template
-            value_template: "{{ enabled }}"
-          - condition: template
-            value_template: "{{ not window_open }}"
-          - condition: template
-            value_template: "{{ not climate_is_off }}"
-          - condition: template
-            value_template: "{{ min_run_ok }}"
-          - condition: template
-            value_template: "{{ current_temp is not none and current_temp <= lower_limit }}"
-        sequence:
-          - service: climate.turn_off
-            target:
-              entity_id: !input climate_entity
+              fan_mode: "{{ active_fan_mode }}"
