@@ -1,0 +1,282 @@
+blueprint:
+  name: Klima mit externem Thermostat, Hysterese und Sperrzeiten
+  description: >
+    Steuert ein Klimagerät über einen externen Temperatursensor mit Hysterese,
+    Mindestlaufzeit, Mindestpause, Aktiv-Schalter und optionalem Fensterkontakt.
+  domain: automation
+
+  input:
+    climate_entity:
+      name: Klimagerät
+      selector:
+        entity:
+          domain: climate
+
+    temperature_sensor:
+      name: Externer Temperatursensor
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    enable_boolean:
+      name: Aktiv-Schalter
+      selector:
+        entity:
+          domain: input_boolean
+
+    control_mode:
+      name: Betriebsart
+      default: cool
+      selector:
+        select:
+          options:
+            - label: Kühlen
+              value: cool
+            - label: Heizen
+              value: heat
+
+    target_temperature:
+      name: Gewünschte Raumtemperatur
+      default: 23
+      selector:
+        number:
+          min: 10
+          max: 35
+          step: 0.1
+          unit_of_measurement: °C
+
+    hysteresis:
+      name: Hysterese
+      default: 0.5
+      selector:
+        number:
+          min: 0.1
+          max: 5
+          step: 0.1
+          unit_of_measurement: °C
+
+    ac_set_temperature:
+      name: Temperatur, die an der Klimaanlage gesetzt wird
+      default: 18
+      selector:
+        number:
+          min: 10
+          max: 35
+          step: 0.5
+          unit_of_measurement: °C
+
+    fan_mode:
+      name: Lüftermodus
+      default: ""
+      description: "Optional, z. B. auto, low, medium, high. Leer lassen, wenn nicht setzen."
+      selector:
+        text:
+
+    swing_mode:
+      name: Swing-Modus
+      default: ""
+      description: "Optional, z. B. off, vertical, horizontal, both. Leer lassen, wenn nicht setzen."
+      selector:
+        text:
+
+    min_run_minutes:
+      name: Mindestlaufzeit
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 120
+          step: 1
+          unit_of_measurement: min
+
+    min_off_minutes:
+      name: Mindestpause
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 120
+          step: 1
+          unit_of_measurement: min
+
+    stable_for_minutes:
+      name: Temperatur muss so lange stabil über/unter Grenze liegen
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 1
+          unit_of_measurement: min
+
+    window_contact:
+      name: Fensterkontakt optional
+      default: []
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+mode: single
+
+trigger:
+  - platform: state
+    entity_id: !input temperature_sensor
+    for:
+      minutes: !input stable_for_minutes
+
+  - platform: state
+    entity_id: !input enable_boolean
+
+  - platform: state
+    entity_id: !input window_contact
+
+variables:
+  climate_entity: !input climate_entity
+  temperature_sensor: !input temperature_sensor
+  enable_boolean: !input enable_boolean
+  control_mode: !input control_mode
+  target_temperature: !input target_temperature
+  hysteresis: !input hysteresis
+  ac_set_temperature: !input ac_set_temperature
+  fan_mode: !input fan_mode
+  swing_mode: !input swing_mode
+  min_run_minutes: !input min_run_minutes
+  min_off_minutes: !input min_off_minutes
+  window_contact: !input window_contact
+
+  current_temp: "{{ states(temperature_sensor) | float(none) }}"
+  upper_limit: "{{ target_temperature + hysteresis }}"
+  lower_limit: "{{ target_temperature - hysteresis }}"
+
+  climate_is_off: "{{ states(climate_entity) == 'off' }}"
+  enabled: "{{ is_state(enable_boolean, 'on') }}"
+
+  window_open: >
+    {% if window_contact | count == 0 %}
+      false
+    {% else %}
+      {{ expand(window_contact) | selectattr('state', 'eq', 'on') | list | count > 0 }}
+    {% endif %}
+
+  seconds_since_climate_change: >
+    {{ (as_timestamp(now()) - as_timestamp(states[climate_entity].last_changed)) | int }}
+
+  min_run_ok: "{{ seconds_since_climate_change >= (min_run_minutes | int * 60) }}"
+  min_off_ok: "{{ seconds_since_climate_change >= (min_off_minutes | int * 60) }}"
+
+action:
+  - choose:
+      # Manuell deaktiviert oder Fenster offen -> Klima aus
+      - conditions:
+          - condition: template
+            value_template: "{{ not enabled or window_open }}"
+          - condition: template
+            value_template: "{{ not climate_is_off }}"
+        sequence:
+          - service: climate.turn_off
+            target:
+              entity_id: !input climate_entity
+
+      # Kühlen einschalten
+      - conditions:
+          - condition: template
+            value_template: "{{ enabled and not window_open }}"
+          - condition: template
+            value_template: "{{ control_mode == 'cool' }}"
+          - condition: template
+            value_template: "{{ current_temp is not none and current_temp >= upper_limit }}"
+          - condition: template
+            value_template: "{{ climate_is_off }}"
+          - condition: template
+            value_template: "{{ min_off_ok }}"
+        sequence:
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_entity
+            data:
+              hvac_mode: cool
+
+          - service: climate.set_temperature
+            target:
+              entity_id: !input climate_entity
+            data:
+              temperature: !input ac_set_temperature
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ fan_mode | length > 0 }}"
+                sequence:
+                  - service: climate.set_fan_mode
+                    target:
+                      entity_id: !input climate_entity
+                    data:
+                      fan_mode: "{{ fan_mode }}"
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ swing_mode | length > 0 }}"
+                sequence:
+                  - service: climate.set_swing_mode
+                    target:
+                      entity_id: !input climate_entity
+                    data:
+                      swing_mode: "{{ swing_mode }}"
+
+      # Kühlen ausschalten
+      - conditions:
+          - condition: template
+            value_template: "{{ control_mode == 'cool' }}"
+          - condition: template
+            value_template: "{{ current_temp is not none and current_temp <= lower_limit }}"
+          - condition: template
+            value_template: "{{ not climate_is_off }}"
+          - condition: template
+            value_template: "{{ min_run_ok }}"
+        sequence:
+          - service: climate.turn_off
+            target:
+              entity_id: !input climate_entity
+
+      # Heizen einschalten
+      - conditions:
+          - condition: template
+            value_template: "{{ enabled and not window_open }}"
+          - condition: template
+            value_template: "{{ control_mode == 'heat' }}"
+          - condition: template
+            value_template: "{{ current_temp is not none and current_temp <= lower_limit }}"
+          - condition: template
+            value_template: "{{ climate_is_off }}"
+          - condition: template
+            value_template: "{{ min_off_ok }}"
+        sequence:
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_entity
+            data:
+              hvac_mode: heat
+
+          - service: climate.set_temperature
+            target:
+              entity_id: !input climate_entity
+            data:
+              temperature: !input ac_set_temperature
+
+      # Heizen ausschalten
+      - conditions:
+          - condition: template
+            value_template: "{{ control_mode == 'heat' }}"
+          - condition: template
+            value_template: "{{ current_temp is not none and current_temp >= upper_limit }}"
+          - condition: template
+            value_template: "{{ not climate_is_off }}"
+          - condition: template
+            value_template: "{{ min_run_ok }}"
+        sequence:
+          - service: climate.turn_off
+            target:
+              entity_id: !input climate_entity
