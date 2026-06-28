@@ -1,8 +1,9 @@
 blueprint:
-  name: Smarter Lüftungsassistent mit Maximalzeit
+  name: Smarter Lüftungsassistent Plus
   description: >
-    Pro Raum nutzbarer Lüftungsassistent. Benachrichtigt per Notify/Pushover,
-    wenn Lüften ausreichend war, kontraproduktiv wird oder die maximale Lüftungsdauer erreicht ist.
+    Lüftungsassistent pro Raum mit Temperatur- und Feuchtelogik.
+    Erkennt Abkühlung, Feuchtereduktion, kontraproduktive Außenluft
+    und sendet eine Notify/Pushover-Benachrichtigung.
   domain: automation
 
   input:
@@ -72,33 +73,8 @@ blueprint:
           step: 1
           unit_of_measurement: "%"
 
-    min_open_time:
-      name: Erste Prüfung nach
-      default:
-        minutes: 5
-      selector:
-        duration:
-
-    check_interval:
-      name: Prüfintervall
-      default:
-        minutes: 2
-      selector:
-        duration:
-
-    max_open_time_minutes:
-      name: Maximale Lüftungsdauer
-      default: 20
-      selector:
-        number:
-          min: 5
-          max: 120
-          step: 1
-          unit_of_measurement: "min"
-
-    temp_margin:
-      name: Temperatur-Puffer
-      description: Verhindert zu empfindliche Entscheidungen bei kleinen Temperaturunterschieden.
+    cooling_target_margin:
+      name: Abkühlen bis Innen nur noch X °C wärmer als Außen
       default: 1
       selector:
         number:
@@ -106,6 +82,67 @@ blueprint:
           max: 5
           step: 0.5
           unit_of_measurement: "°C"
+
+    temp_margin:
+      name: Temperatur-Puffer
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.5
+          unit_of_measurement: "°C"
+
+    hot_outside_margin:
+      name: Draußen deutlich heißer ab
+      description: Wenn Außen um diesen Wert wärmer ist als Innen, kommt schnell eine Warnung.
+      default: 2
+      selector:
+        number:
+          min: 0.5
+          max: 10
+          step: 0.5
+          unit_of_measurement: "°C"
+
+    early_hot_warning_minutes:
+      name: Frühe Hitzewarnung nach
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 10
+          step: 1
+          unit_of_measurement: "min"
+
+    normal_check_after_minutes:
+      name: Normale Prüfung frühestens nach
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: "min"
+
+    check_interval_minutes:
+      name: Prüfintervall
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 15
+          step: 1
+          unit_of_measurement: "min"
+
+    max_open_time_minutes:
+      name: Maximale Lüftungsdauer
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 180
+          step: 1
+          unit_of_measurement: "min"
 
 mode: restart
 
@@ -124,14 +161,18 @@ variables:
   notify_service: !input notify_service
   target_humidity: !input target_humidity
   min_humidity_drop: !input min_humidity_drop
-  max_open_time_minutes: !input max_open_time_minutes
+  cooling_target_margin: !input cooling_target_margin
   temp_margin: !input temp_margin
+  hot_outside_margin: !input hot_outside_margin
+  early_hot_warning_minutes: !input early_hot_warning_minutes
+  normal_check_after_minutes: !input normal_check_after_minutes
+  check_interval_minutes: !input check_interval_minutes
+  max_open_time_minutes: !input max_open_time_minutes
   start_humidity: "{{ states(indoor_humidity) | float(0) }}"
+  start_temperature: "{{ states(indoor_temperature) | float(0) }}"
   start_time: "{{ now() }}"
 
 action:
-  - delay: !input min_open_time
-
   - repeat:
       while:
         - condition: state
@@ -144,6 +185,9 @@ action:
             ta: "{{ states(outdoor_temperature) | float(0) }}"
             ha: "{{ states(outdoor_humidity) | float(0) }}"
 
+            open_minutes: >
+              {{ ((as_timestamp(now()) - as_timestamp(start_time)) / 60) | round(1) }}
+
             abs_in: >
               {{ (216.7 * ((hi / 100) * 6.112 * (2.718281828 ** ((17.62 * ti) / (243.12 + ti)))) / (273.15 + ti)) | round(2) }}
 
@@ -151,35 +195,62 @@ action:
               {{ (216.7 * ((ha / 100) * 6.112 * (2.718281828 ** ((17.62 * ta) / (243.12 + ta)))) / (273.15 + ta)) | round(2) }}
 
             humidity_drop: "{{ (start_humidity - hi) | round(1) }}"
+            temperature_drop: "{{ (start_temperature - ti) | round(1) }}"
+
+            outside_cooler: >
+              {{ ta < ti - temp_margin }}
+
+            cooling_possible: >
+              {{ outside_cooler }}
+
+            cooling_done: >
+              {{ cooling_possible and ti <= ta + cooling_target_margin }}
 
             humidity_done: >
               {{ hi <= target_humidity or humidity_drop >= min_humidity_drop }}
 
-            outside_warmer_than_inside: >
-              {{ ta > ti + temp_margin }}
+            humidity_done_without_cooling_need: >
+              {{ humidity_done and not cooling_possible }}
+
+            outside_hot_warning: >
+              {{ open_minutes >= early_hot_warning_minutes and ta >= ti + hot_outside_margin }}
 
             outside_not_drier: >
               {{ abs_out >= abs_in }}
 
             ventilation_counterproductive: >
-              {{ outside_warmer_than_inside and outside_not_drier }}
+              {{ ta > ti + temp_margin and outside_not_drier }}
 
-            open_minutes: >
-              {{ ((as_timestamp(now()) - as_timestamp(start_time)) / 60) | round(0) }}
+            normal_checks_allowed: >
+              {{ open_minutes >= normal_check_after_minutes }}
 
             max_time_reached: >
               {{ open_minutes >= max_open_time_minutes }}
 
             should_notify: >
-              {{ humidity_done or ventilation_counterproductive or max_time_reached }}
+              {{
+                outside_hot_warning
+                or max_time_reached
+                or (
+                  normal_checks_allowed and (
+                    cooling_done
+                    or humidity_done_without_cooling_need
+                    or ventilation_counterproductive
+                  )
+                )
+              }}
 
             notify_reason: >
-              {% if humidity_done %}
-                Luftfeuchtigkeit ausreichend reduziert.
+              {% if outside_hot_warning %}
+                Draußen ist es deutlich heißer als drinnen. Fenster besser schließen, damit keine Hitze hereinkommt.
+              {% elif cooling_done %}
+                Der Raum ist weit genug an die kühlere Außenluft angepasst.
+              {% elif humidity_done_without_cooling_need %}
+                Die Luftfeuchtigkeit wurde ausreichend reduziert.
               {% elif ventilation_counterproductive %}
                 Lüften wird kontraproduktiv: draußen ist es wärmer und nicht trockener als drinnen.
               {% elif max_time_reached %}
-                Maximale Lüftungsdauer erreicht.
+                Die maximale Lüftungsdauer wurde erreicht.
               {% else %}
                 Lüften ist noch sinnvoll.
               {% endif %}
@@ -194,13 +265,20 @@ action:
                     title: "Fenster schließen"
                     message: >
                       {{ room_name }}: {{ notify_reason }}
-                      Fenster ist seit ca. {{ open_minutes }} Minuten offen.
+
+                      Fenster offen seit ca. {{ open_minutes }} Minuten.
+
                       Innen: {{ ti }} °C / {{ hi }} %
                       Außen: {{ ta }} °C / {{ ha }} %
-                      Absolute Feuchte innen/außen: {{ abs_in }} / {{ abs_out }} g/m³.
-                      Feuchteänderung seit Öffnen: {{ humidity_drop }} %.
+
+                      Temperaturänderung seit Öffnen: {{ temperature_drop }} °C
+                      Feuchteänderung seit Öffnen: {{ humidity_drop }} %
+
+                      Absolute Feuchte innen/außen:
+                      {{ abs_in }} / {{ abs_out }} g/m³
                     data:
                       priority: 0
                 - stop: "Benachrichtigung gesendet"
 
-        - delay: !input check_interval
+        - delay:
+            minutes: !input check_interval_minutes
