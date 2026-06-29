@@ -1,9 +1,9 @@
 blueprint:
-  name: Smarter Lüftungsassistent Plus
+  name: Smarter Lüftungsassistent Plus v2
   description: >
-    Lüftungsassistent pro Raum mit Temperatur- und Feuchtelogik.
-    Erkennt Abkühlung, Feuchtereduktion, kontraproduktive Außenluft
-    und sendet eine Notify/Pushover-Benachrichtigung.
+    Lüftungsassistent pro Raum. Priorisiert im Sommer/bei Hitze das Abkühlen,
+    warnt schnell bei heißer Außenluft und nutzt Feuchtigkeit nur dann als
+    Schließgrund, wenn keine starke Abkühlung aktiv ist.
   domain: automation
 
   input:
@@ -48,7 +48,6 @@ blueprint:
 
     notify_service:
       name: Notify-Service
-      description: Zum Beispiel notify.pushover
       default: notify.pushover
       selector:
         text:
@@ -75,27 +74,26 @@ blueprint:
 
     cooling_target_margin:
       name: Abkühlen bis Innen nur noch X °C wärmer als Außen
-      default: 1
+      default: 0.5
       selector:
         number:
           min: 0
           max: 5
-          step: 0.5
+          step: 0.1
           unit_of_measurement: "°C"
 
-    temp_margin:
-      name: Temperatur-Puffer
-      default: 1
+    cooling_active_margin:
+      name: Abkühlen aktiv, wenn Außen mindestens X °C kühler ist
+      default: 2
       selector:
         number:
-          min: 0
-          max: 5
+          min: 0.5
+          max: 10
           step: 0.5
           unit_of_measurement: "°C"
 
     hot_outside_margin:
       name: Draußen deutlich heißer ab
-      description: Wenn Außen um diesen Wert wärmer ist als Innen, kommt schnell eine Warnung.
       default: 2
       selector:
         number:
@@ -136,12 +134,12 @@ blueprint:
 
     max_open_time_minutes:
       name: Maximale Lüftungsdauer
-      default: 20
+      default: 60
       selector:
         number:
-          min: 5
-          max: 180
-          step: 1
+          min: 10
+          max: 240
+          step: 5
           unit_of_measurement: "min"
 
 mode: restart
@@ -162,7 +160,7 @@ variables:
   target_humidity: !input target_humidity
   min_humidity_drop: !input min_humidity_drop
   cooling_target_margin: !input cooling_target_margin
-  temp_margin: !input temp_margin
+  cooling_active_margin: !input cooling_active_margin
   hot_outside_margin: !input hot_outside_margin
   early_hot_warning_minutes: !input early_hot_warning_minutes
   normal_check_after_minutes: !input normal_check_after_minutes
@@ -197,20 +195,17 @@ action:
             humidity_drop: "{{ (start_humidity - hi) | round(1) }}"
             temperature_drop: "{{ (start_temperature - ti) | round(1) }}"
 
-            outside_cooler: >
-              {{ ta < ti - temp_margin }}
-
-            cooling_possible: >
-              {{ outside_cooler }}
+            strong_cooling_active: >
+              {{ ta <= ti - cooling_active_margin }}
 
             cooling_done: >
-              {{ cooling_possible and ti <= ta + cooling_target_margin }}
+              {{ ta < ti and ti <= ta + cooling_target_margin }}
 
             humidity_done: >
               {{ hi <= target_humidity or humidity_drop >= min_humidity_drop }}
 
-            humidity_done_without_cooling_need: >
-              {{ humidity_done and not cooling_possible }}
+            humidity_done_allowed: >
+              {{ humidity_done and not strong_cooling_active }}
 
             outside_hot_warning: >
               {{ open_minutes >= early_hot_warning_minutes and ta >= ti + hot_outside_margin }}
@@ -219,7 +214,7 @@ action:
               {{ abs_out >= abs_in }}
 
             ventilation_counterproductive: >
-              {{ ta > ti + temp_margin and outside_not_drier }}
+              {{ ta > ti and outside_not_drier }}
 
             normal_checks_allowed: >
               {{ open_minutes >= normal_check_after_minutes }}
@@ -234,7 +229,7 @@ action:
                 or (
                   normal_checks_allowed and (
                     cooling_done
-                    or humidity_done_without_cooling_need
+                    or humidity_done_allowed
                     or ventilation_counterproductive
                   )
                 )
@@ -244,8 +239,8 @@ action:
               {% if outside_hot_warning %}
                 Draußen ist es deutlich heißer als drinnen. Fenster besser schließen, damit keine Hitze hereinkommt.
               {% elif cooling_done %}
-                Der Raum ist weit genug an die kühlere Außenluft angepasst.
-              {% elif humidity_done_without_cooling_need %}
+                Der Raum ist fast auf Außentemperatur abgekühlt.
+              {% elif humidity_done_allowed %}
                 Die Luftfeuchtigkeit wurde ausreichend reduziert.
               {% elif ventilation_counterproductive %}
                 Lüften wird kontraproduktiv: draußen ist es wärmer und nicht trockener als drinnen.
