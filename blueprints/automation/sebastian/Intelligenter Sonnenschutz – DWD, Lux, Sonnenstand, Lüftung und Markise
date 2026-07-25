@@ -1,0 +1,563 @@
+blueprint:
+  name: Intelligenter Sonnenschutz – DWD, Lux, Sonnenstand, Lüftung und Markise
+  description: >
+    Steuert ein Rollo anhand von lokal gemessener Helligkeit, DWD-Wetterzustand,
+    DWD-Bewölkungsgrad, Sonnenhöhe, Sonnenrichtung sowie Innen- und Außentemperatur.
+    Fensteröffnung, optionale Markise, Nacht-/Geschlossen-Sperre und manueller
+    Hitzeschutz werden berücksichtigt. Für jeden Raum wird eine eigene Automation
+    aus diesem Blueprint erstellt.
+  domain: automation
+  homeassistant:
+    min_version: 2024.6.0
+
+  input:
+    master_switch:
+      name: Master-Schalter Sonnenschutz
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+
+    local_switch:
+      name: Schalter für dieses Rollo
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+
+    manual_boost_switch:
+      name: Manueller Hitzeschutz
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+
+    manual_boost_off_time:
+      name: Manuellen Hitzeschutz spätestens ausschalten
+      default: "18:00:00"
+      selector:
+        time:
+
+    cover_entity:
+      name: Rollo
+      selector:
+        entity:
+          filter:
+            - domain: cover
+
+    window_contact:
+      name: Fensterkontakt
+      description: "on = geöffnet, off = geschlossen"
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+
+    awning:
+      name: Markise (optional)
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: cover
+
+    illuminance_sensor:
+      name: Helligkeitssensor
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: illuminance
+
+    weather_condition_sensor:
+      name: DWD-Wetterzustand
+      description: Zum Beispiel sensor.herne_wetterzustand
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+
+    cloud_cover_sensor:
+      name: DWD-Bewölkungsgrad
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+
+    outside_temperature_sensor:
+      name: Außentemperatur
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+
+    inside_temperature_sensor:
+      name: Innentemperatur dieses Raums
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+
+    minimum_outside_temperature:
+      name: Mindest-Außentemperatur
+      default: 20
+      selector:
+        number:
+          min: 0
+          max: 40
+          step: 0.5
+          unit_of_measurement: "°C"
+
+    minimum_inside_temperature:
+      name: Mindest-Innentemperatur
+      default: 22
+      selector:
+        number:
+          min: 10
+          max: 35
+          step: 0.5
+          unit_of_measurement: "°C"
+
+    minimum_elevation:
+      name: Minimale Sonnenhöhe
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 80
+          step: 1
+          unit_of_measurement: "°"
+
+    minimum_azimuth:
+      name: Azimut – Beginn des Fensterbereichs
+      default: 110
+      selector:
+        number:
+          min: 0
+          max: 359
+          step: 1
+          unit_of_measurement: "°"
+
+    maximum_azimuth:
+      name: Azimut – Ende des Fensterbereichs
+      default: 247
+      selector:
+        number:
+          min: 0
+          max: 359
+          step: 1
+          unit_of_measurement: "°"
+
+    maximum_cloud_cover:
+      name: Maximal erlaubter Bewölkungsgrad
+      default: 70
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    lux_threshold_cloud_0_20:
+      name: Lux-Schwelle bei 0–20 % Bewölkung
+      default: 30000
+      selector:
+        number:
+          min: 5000
+          max: 100000
+          step: 1000
+          unit_of_measurement: lx
+
+    lux_threshold_cloud_21_40:
+      name: Lux-Schwelle bei 21–40 % Bewölkung
+      default: 35000
+      selector:
+        number:
+          min: 5000
+          max: 100000
+          step: 1000
+          unit_of_measurement: lx
+
+    lux_threshold_cloud_41_60:
+      name: Lux-Schwelle bei 41–60 % Bewölkung
+      default: 42000
+      selector:
+        number:
+          min: 5000
+          max: 100000
+          step: 1000
+          unit_of_measurement: lx
+
+    lux_threshold_cloud_61_100:
+      name: Lux-Schwelle bei 61–100 % Bewölkung
+      default: 52000
+      selector:
+        number:
+          min: 5000
+          max: 120000
+          step: 1000
+          unit_of_measurement: lx
+
+    allowed_weather_states:
+      name: Erlaubte Wetterzustände
+      default:
+        - sunny
+        - partlycloudy
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Sonnig
+              value: sunny
+            - label: Teilweise bewölkt
+              value: partlycloudy
+            - label: Bewölkt
+              value: cloudy
+            - label: Klar
+              value: clear-night
+            - label: Windig
+              value: windy
+            - label: Windig mit Wolken
+              value: windy-variant
+            - label: Regnerisch
+              value: rainy
+            - label: Starkregen
+              value: pouring
+            - label: Nebel
+              value: fog
+
+    sun_on_delay:
+      name: Einschaltverzögerung
+      default:
+        minutes: 10
+      selector:
+        duration:
+
+    sun_off_delay:
+      name: Ausschaltverzögerung
+      default:
+        minutes: 20
+      selector:
+        duration:
+
+    off_hysteresis_percent:
+      name: Helligkeits-Hysterese beim Öffnen
+      default: 25
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 1
+          unit_of_measurement: "%"
+
+    ventilation_position:
+      name: Beschattungs-/Lüftungsposition
+      default: 15
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    open_position:
+      name: Offen-Position
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    closed_position:
+      name: Geschlossen-/Nachtposition
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    position_tolerance:
+      name: Positionstoleranz
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 20
+          step: 1
+          unit_of_measurement: "%"
+
+    only_open_if_automation_shaded:
+      name: Beim Ende nur aus Beschattungsposition öffnen
+      default: true
+      selector:
+        boolean:
+
+mode: restart
+max_exceeded: silent
+
+trigger_variables:
+  illuminance_sensor_t: !input illuminance_sensor
+  weather_condition_sensor_t: !input weather_condition_sensor
+  cloud_cover_sensor_t: !input cloud_cover_sensor
+  outside_temperature_sensor_t: !input outside_temperature_sensor
+  inside_temperature_sensor_t: !input inside_temperature_sensor
+  minimum_outside_temperature_t: !input minimum_outside_temperature
+  minimum_inside_temperature_t: !input minimum_inside_temperature
+  minimum_elevation_t: !input minimum_elevation
+  minimum_azimuth_t: !input minimum_azimuth
+  maximum_azimuth_t: !input maximum_azimuth
+  maximum_cloud_cover_t: !input maximum_cloud_cover
+  lux_threshold_cloud_0_20_t: !input lux_threshold_cloud_0_20
+  lux_threshold_cloud_21_40_t: !input lux_threshold_cloud_21_40
+  lux_threshold_cloud_41_60_t: !input lux_threshold_cloud_41_60
+  lux_threshold_cloud_61_100_t: !input lux_threshold_cloud_61_100
+  allowed_weather_states_t: !input allowed_weather_states
+  off_hysteresis_percent_t: !input off_hysteresis_percent
+
+triggers:
+  - trigger: template
+    id: automatic_sun_on
+    value_template: >
+      {% set lux = states(illuminance_sensor_t) | float(-1) %}
+      {% set weather = states(weather_condition_sensor_t) %}
+      {% set cloud = states(cloud_cover_sensor_t) | float(-1) %}
+      {% set outside = states(outside_temperature_sensor_t) | float(-99) %}
+      {% set inside = states(inside_temperature_sensor_t) | float(-99) %}
+      {% set elevation = state_attr('sun.sun', 'elevation') | float(-90) %}
+      {% set azimuth = state_attr('sun.sun', 'azimuth') | float(-1) %}
+      {% set threshold =
+        lux_threshold_cloud_0_20_t if cloud <= 20 else
+        lux_threshold_cloud_21_40_t if cloud <= 40 else
+        lux_threshold_cloud_41_60_t if cloud <= 60 else
+        lux_threshold_cloud_61_100_t
+      %}
+      {{
+        lux >= 0 and cloud >= 0
+        and weather in allowed_weather_states_t
+        and cloud <= maximum_cloud_cover_t
+        and elevation >= minimum_elevation_t
+        and azimuth >= minimum_azimuth_t
+        and azimuth <= maximum_azimuth_t
+        and lux >= threshold
+        and (outside > minimum_outside_temperature_t or inside > minimum_inside_temperature_t)
+      }}
+    for: !input sun_on_delay
+
+  - trigger: template
+    id: automatic_sun_off
+    value_template: >
+      {% set lux = states(illuminance_sensor_t) | float(-1) %}
+      {% set weather = states(weather_condition_sensor_t) %}
+      {% set cloud = states(cloud_cover_sensor_t) | float(-1) %}
+      {% set elevation = state_attr('sun.sun', 'elevation') | float(-90) %}
+      {% set azimuth = state_attr('sun.sun', 'azimuth') | float(-1) %}
+      {% set threshold =
+        lux_threshold_cloud_0_20_t if cloud <= 20 else
+        lux_threshold_cloud_21_40_t if cloud <= 40 else
+        lux_threshold_cloud_41_60_t if cloud <= 60 else
+        lux_threshold_cloud_61_100_t
+      %}
+      {% set off_threshold = threshold * (1 - off_hysteresis_percent_t / 100) %}
+      {{
+        lux < 0 or cloud < 0
+        or weather not in allowed_weather_states_t
+        or cloud > maximum_cloud_cover_t
+        or elevation < minimum_elevation_t
+        or azimuth < minimum_azimuth_t
+        or azimuth > maximum_azimuth_t
+        or lux < off_threshold
+      }}
+    for: !input sun_off_delay
+
+  - trigger: state
+    entity_id: !input master_switch
+    id: control_changed
+  - trigger: state
+    entity_id: !input local_switch
+    id: control_changed
+  - trigger: state
+    entity_id: !input manual_boost_switch
+    id: manual_boost_changed
+  - trigger: time
+    at: !input manual_boost_off_time
+    id: manual_boost_off_time
+  - trigger: state
+    entity_id: !input window_contact
+    id: window_changed
+  - trigger: state
+    entity_id: !input awning
+    id: awning_changed
+  - trigger: homeassistant
+    event: start
+    id: home_assistant_start
+  - trigger: time_pattern
+    minutes: "/10"
+    id: periodic_check
+
+variables:
+  master_switch: !input master_switch
+  local_switch: !input local_switch
+  manual_boost_switch: !input manual_boost_switch
+  cover_entity: !input cover_entity
+  window_contact: !input window_contact
+  awning: !input awning
+  illuminance_sensor: !input illuminance_sensor
+  weather_condition_sensor: !input weather_condition_sensor
+  cloud_cover_sensor: !input cloud_cover_sensor
+  outside_temperature_sensor: !input outside_temperature_sensor
+  inside_temperature_sensor: !input inside_temperature_sensor
+  minimum_outside_temperature: !input minimum_outside_temperature
+  minimum_inside_temperature: !input minimum_inside_temperature
+  minimum_elevation: !input minimum_elevation
+  minimum_azimuth: !input minimum_azimuth
+  maximum_azimuth: !input maximum_azimuth
+  maximum_cloud_cover: !input maximum_cloud_cover
+  lux_threshold_cloud_0_20: !input lux_threshold_cloud_0_20
+  lux_threshold_cloud_21_40: !input lux_threshold_cloud_21_40
+  lux_threshold_cloud_41_60: !input lux_threshold_cloud_41_60
+  lux_threshold_cloud_61_100: !input lux_threshold_cloud_61_100
+  allowed_weather_states: !input allowed_weather_states
+  off_hysteresis_percent: !input off_hysteresis_percent
+  ventilation_position: !input ventilation_position
+  open_position: !input open_position
+  closed_position: !input closed_position
+  position_tolerance: !input position_tolerance
+  only_open_if_automation_shaded: !input only_open_if_automation_shaded
+
+  has_awning: "{{ awning != [] and awning != '' and awning is not none }}"
+  current_position: "{{ state_attr(cover_entity, 'current_position') | int(-1) }}"
+  is_fully_closed: >
+    {{ current_position != -1 and (current_position - closed_position) | abs <= position_tolerance }}
+  is_at_shading_position: >
+    {{ current_position != -1 and (current_position - ventilation_position) | abs <= position_tolerance }}
+  lux: "{{ states(illuminance_sensor) | float(-1) }}"
+  weather: "{{ states(weather_condition_sensor) }}"
+  cloud: "{{ states(cloud_cover_sensor) | float(-1) }}"
+  outside_temperature: "{{ states(outside_temperature_sensor) | float(-99) }}"
+  inside_temperature: "{{ states(inside_temperature_sensor) | float(-99) }}"
+  elevation: "{{ state_attr('sun.sun', 'elevation') | float(-90) }}"
+  azimuth: "{{ state_attr('sun.sun', 'azimuth') | float(-1) }}"
+  active_lux_threshold: >
+    {{
+      lux_threshold_cloud_0_20 if cloud <= 20 else
+      lux_threshold_cloud_21_40 if cloud <= 40 else
+      lux_threshold_cloud_41_60 if cloud <= 60 else
+      lux_threshold_cloud_61_100
+    }}
+  automatic_conditions_now: >
+    {{
+      lux >= 0 and cloud >= 0
+      and weather in allowed_weather_states
+      and cloud <= maximum_cloud_cover
+      and elevation >= minimum_elevation
+      and azimuth >= minimum_azimuth
+      and azimuth <= maximum_azimuth
+      and lux >= active_lux_threshold
+      and (outside_temperature > minimum_outside_temperature or inside_temperature > minimum_inside_temperature)
+    }}
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: manual_boost_off_time
+        sequence:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: !input manual_boost_switch
+          - stop: Manueller Hitzeschutz wurde automatisch ausgeschaltet.
+
+      - conditions:
+          - condition: template
+            value_template: "{{ is_state(master_switch, 'off') or is_state(local_switch, 'off') }}"
+        sequence:
+          - stop: Sonnenschutz ist über einen Schalter deaktiviert.
+
+      - conditions:
+          - condition: template
+            value_template: "{{ is_state(window_contact, 'on') }}"
+        sequence:
+          - action: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: "{{ open_position }}"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ is_fully_closed }}"
+        sequence:
+          - stop: Rollo befindet sich in der Geschlossen-/Nachtposition.
+
+      - conditions:
+          - condition: template
+            value_template: "{{ has_awning and not is_state(awning, 'closed') }}"
+        sequence:
+          - action: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: "{{ open_position }}"
+
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ is_state(manual_boost_switch, 'on') and is_state(window_contact, 'off')
+                 and (not has_awning or is_state(awning, 'closed')) }}
+        sequence:
+          - action: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: "{{ ventilation_position }}"
+
+      - conditions:
+          - condition: template
+            value_template: >
+              {{
+                trigger.id == 'automatic_sun_on'
+                or (
+                  trigger.id in ['control_changed', 'window_changed', 'awning_changed',
+                                 'home_assistant_start', 'periodic_check']
+                  and automatic_conditions_now
+                )
+              }}
+          - condition: template
+            value_template: "{{ is_state(window_contact, 'off') }}"
+          - condition: template
+            value_template: "{{ not has_awning or is_state(awning, 'closed') }}"
+        sequence:
+          - action: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: "{{ ventilation_position }}"
+
+      - conditions:
+          - condition: template
+            value_template: >
+              {{
+                trigger.id == 'automatic_sun_off'
+                or (
+                  trigger.id in ['control_changed', 'manual_boost_changed', 'window_changed',
+                                 'awning_changed', 'home_assistant_start', 'periodic_check']
+                  and not automatic_conditions_now
+                )
+              }}
+          - condition: template
+            value_template: "{{ not only_open_if_automation_shaded or is_at_shading_position }}"
+        sequence:
+          - action: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: "{{ open_position }}"
+
+    default:
+      - stop: Keine Aktion erforderlich.
