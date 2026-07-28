@@ -1,12 +1,15 @@
 blueprint:
-  name: Intelligenter Sonnenschutz – DWD, Lux, Sonnenstand, Lüftung und Markise
+  name: Intelligenter Sonnenschutz – DWD, Lux, Sonnenstand, Lüftung und Markise V2
   description: >
-    Steuert ein Rollo anhand von lokal gemessener Helligkeit, DWD-Wetterzustand,
-    DWD-Bewölkungsgrad, Sonnenhöhe, Sonnenrichtung sowie Innen- und Außentemperatur.
-    Fensteröffnung, optionale Markise, Nacht-/Geschlossen-Sperre und manueller
-    Hitzeschutz werden berücksichtigt. Für jeden Raum wird eine eigene Automation
-    aus diesem Blueprint erstellt.
+    Version 2.0: Startet die Beschattung nur bei passenden Wetter-, Bewölkungs-,
+    Helligkeits-, Sonnenstands- und Temperaturbedingungen. Sobald die Beschattung
+    gestartet wurde, bleibt sie unabhängig von vorüberziehenden Wolken oder
+    sinkenden Luxwerten aktiv. Das Rollo öffnet zur eingestellten Endzeit oder
+    vorübergehend bei geöffnetem Fenster beziehungsweise ausgefahrener Markise.
+    Mit einem optionalen input_boolean wird der aktive Beschattungszustand
+    zuverlässig gespeichert.
   domain: automation
+
   homeassistant:
     min_version: 2024.6.0
 
@@ -37,6 +40,28 @@ blueprint:
       default: "18:00:00"
       selector:
         time:
+
+    shading_end_time:
+      name: Ende der automatischen Beschattung
+      description: >
+        Zu dieser Uhrzeit wird die automatische Beschattung beendet und das
+        Rollo wieder geöffnet.
+      default: "18:00:00"
+      selector:
+        time:
+
+    shading_memory_helper:
+      name: Sonnenschutz-Speicher
+      description: >
+        Empfohlen: Für jedes Rollo einen eigenen input_boolean-Helfer auswählen.
+        Dieser merkt sich, dass die automatische Beschattung gestartet wurde.
+        Dadurch fährt das Rollo nach dem Schließen eines Fensters oder dem
+        Einfahren der Markise zuverlässig wieder in die Beschattungsposition.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
 
     cover_entity:
       name: Rollo
@@ -236,14 +261,20 @@ blueprint:
         duration:
 
     sun_off_delay:
-      name: Ausschaltverzögerung
+      name: Ausschaltverzögerung – Kompatibilität
+      description: >
+        Diese Einstellung wird in Version 2 nicht mehr verwendet. Sie bleibt
+        enthalten, damit bestehende Automationen kompatibel bleiben.
       default:
         minutes: 20
       selector:
         duration:
 
     off_hysteresis_percent:
-      name: Helligkeits-Hysterese beim Öffnen
+      name: Helligkeits-Hysterese – Kompatibilität
+      description: >
+        Diese Einstellung wird in Version 2 nicht mehr verwendet. Nach Beginn
+        der Beschattung führen sinkende Luxwerte nicht mehr zum Öffnen.
       default: 25
       selector:
         number:
@@ -294,6 +325,9 @@ blueprint:
 
     only_open_if_automation_shaded:
       name: Beim Ende nur aus Beschattungsposition öffnen
+      description: >
+        Verhindert, dass ein manuell geschlossenes oder anders positioniertes
+        Rollo zur Endzeit ungefragt geöffnet wird.
       default: true
       selector:
         boolean:
@@ -301,24 +335,29 @@ blueprint:
 mode: restart
 max_exceeded: silent
 
+trace:
+  stored_traces: 30
+
 trigger_variables:
   illuminance_sensor_t: !input illuminance_sensor
   weather_condition_sensor_t: !input weather_condition_sensor
   cloud_cover_sensor_t: !input cloud_cover_sensor
   outside_temperature_sensor_t: !input outside_temperature_sensor
   inside_temperature_sensor_t: !input inside_temperature_sensor
+
   minimum_outside_temperature_t: !input minimum_outside_temperature
   minimum_inside_temperature_t: !input minimum_inside_temperature
   minimum_elevation_t: !input minimum_elevation
   minimum_azimuth_t: !input minimum_azimuth
   maximum_azimuth_t: !input maximum_azimuth
   maximum_cloud_cover_t: !input maximum_cloud_cover
+
   lux_threshold_cloud_0_20_t: !input lux_threshold_cloud_0_20
   lux_threshold_cloud_21_40_t: !input lux_threshold_cloud_21_40
   lux_threshold_cloud_41_60_t: !input lux_threshold_cloud_41_60
   lux_threshold_cloud_61_100_t: !input lux_threshold_cloud_61_100
+
   allowed_weather_states_t: !input allowed_weather_states
-  off_hysteresis_percent_t: !input off_hysteresis_percent
 
 triggers:
   - trigger: template
@@ -331,118 +370,157 @@ triggers:
       {% set inside = states(inside_temperature_sensor_t) | float(-99) %}
       {% set elevation = state_attr('sun.sun', 'elevation') | float(-90) %}
       {% set azimuth = state_attr('sun.sun', 'azimuth') | float(-1) %}
+
       {% set threshold =
         lux_threshold_cloud_0_20_t if cloud <= 20 else
         lux_threshold_cloud_21_40_t if cloud <= 40 else
         lux_threshold_cloud_41_60_t if cloud <= 60 else
         lux_threshold_cloud_61_100_t
       %}
+
       {{
-        lux >= 0 and cloud >= 0
+        lux >= 0
+        and cloud >= 0
         and weather in allowed_weather_states_t
         and cloud <= maximum_cloud_cover_t
         and elevation >= minimum_elevation_t
         and azimuth >= minimum_azimuth_t
         and azimuth <= maximum_azimuth_t
         and lux >= threshold
-        and (outside > minimum_outside_temperature_t or inside > minimum_inside_temperature_t)
+        and (
+          outside > minimum_outside_temperature_t
+          or inside > minimum_inside_temperature_t
+        )
       }}
     for: !input sun_on_delay
-
-  - trigger: template
-    id: automatic_sun_off
-    value_template: >
-      {% set lux = states(illuminance_sensor_t) | float(-1) %}
-      {% set weather = states(weather_condition_sensor_t) %}
-      {% set cloud = states(cloud_cover_sensor_t) | float(-1) %}
-      {% set elevation = state_attr('sun.sun', 'elevation') | float(-90) %}
-      {% set azimuth = state_attr('sun.sun', 'azimuth') | float(-1) %}
-      {% set threshold =
-        lux_threshold_cloud_0_20_t if cloud <= 20 else
-        lux_threshold_cloud_21_40_t if cloud <= 40 else
-        lux_threshold_cloud_41_60_t if cloud <= 60 else
-        lux_threshold_cloud_61_100_t
-      %}
-      {% set off_threshold = threshold * (1 - off_hysteresis_percent_t / 100) %}
-      {{
-        lux < 0 or cloud < 0
-        or weather not in allowed_weather_states_t
-        or cloud > maximum_cloud_cover_t
-        or elevation < minimum_elevation_t
-        or azimuth < minimum_azimuth_t
-        or azimuth > maximum_azimuth_t
-        or lux < off_threshold
-      }}
-    for: !input sun_off_delay
 
   - trigger: state
     entity_id: !input master_switch
     id: control_changed
+
   - trigger: state
     entity_id: !input local_switch
     id: control_changed
+
   - trigger: state
     entity_id: !input manual_boost_switch
     id: manual_boost_changed
+
   - trigger: time
     at: !input manual_boost_off_time
     id: manual_boost_off_time
+
+  - trigger: time
+    at: !input shading_end_time
+    id: shading_end_time
+
   - trigger: state
     entity_id: !input window_contact
     id: window_changed
+
   - trigger: state
     entity_id: !input awning
     id: awning_changed
+
   - trigger: homeassistant
     event: start
     id: home_assistant_start
-  - trigger: time_pattern
-    minutes: "/10"
-    id: periodic_check
 
 variables:
   master_switch: !input master_switch
   local_switch: !input local_switch
   manual_boost_switch: !input manual_boost_switch
+  shading_memory_helper: !input shading_memory_helper
+  shading_end_time: !input shading_end_time
+
   cover_entity: !input cover_entity
   window_contact: !input window_contact
   awning: !input awning
+
   illuminance_sensor: !input illuminance_sensor
   weather_condition_sensor: !input weather_condition_sensor
   cloud_cover_sensor: !input cloud_cover_sensor
   outside_temperature_sensor: !input outside_temperature_sensor
   inside_temperature_sensor: !input inside_temperature_sensor
+
   minimum_outside_temperature: !input minimum_outside_temperature
   minimum_inside_temperature: !input minimum_inside_temperature
   minimum_elevation: !input minimum_elevation
   minimum_azimuth: !input minimum_azimuth
   maximum_azimuth: !input maximum_azimuth
   maximum_cloud_cover: !input maximum_cloud_cover
+
   lux_threshold_cloud_0_20: !input lux_threshold_cloud_0_20
   lux_threshold_cloud_21_40: !input lux_threshold_cloud_21_40
   lux_threshold_cloud_41_60: !input lux_threshold_cloud_41_60
   lux_threshold_cloud_61_100: !input lux_threshold_cloud_61_100
+
   allowed_weather_states: !input allowed_weather_states
-  off_hysteresis_percent: !input off_hysteresis_percent
+
   ventilation_position: !input ventilation_position
   open_position: !input open_position
   closed_position: !input closed_position
   position_tolerance: !input position_tolerance
   only_open_if_automation_shaded: !input only_open_if_automation_shaded
 
-  has_awning: "{{ awning != [] and awning != '' and awning is not none }}"
-  current_position: "{{ state_attr(cover_entity, 'current_position') | int(-1) }}"
+  trigger_id: >
+    {{ trigger.id if trigger is defined and trigger.id is defined else 'manual_run' }}
+
+  has_awning: >
+    {{ awning != [] and awning != '' and awning is not none }}
+
+  has_shading_memory_helper: >
+    {{
+      shading_memory_helper != []
+      and shading_memory_helper != ''
+      and shading_memory_helper is not none
+    }}
+
+  shading_memory_active: >
+    {{
+      has_shading_memory_helper
+      and is_state(shading_memory_helper, 'on')
+    }}
+
+  current_position: >
+    {{ state_attr(cover_entity, 'current_position') | int(-1) }}
+
   is_fully_closed: >
-    {{ current_position != -1 and (current_position - closed_position) | abs <= position_tolerance }}
+    {{
+      current_position != -1
+      and (current_position - closed_position) | abs <= position_tolerance
+    }}
+
   is_at_shading_position: >
-    {{ current_position != -1 and (current_position - ventilation_position) | abs <= position_tolerance }}
-  lux: "{{ states(illuminance_sensor) | float(-1) }}"
-  weather: "{{ states(weather_condition_sensor) }}"
-  cloud: "{{ states(cloud_cover_sensor) | float(-1) }}"
-  outside_temperature: "{{ states(outside_temperature_sensor) | float(-99) }}"
-  inside_temperature: "{{ states(inside_temperature_sensor) | float(-99) }}"
-  elevation: "{{ state_attr('sun.sun', 'elevation') | float(-90) }}"
-  azimuth: "{{ state_attr('sun.sun', 'azimuth') | float(-1) }}"
+    {{
+      current_position != -1
+      and (current_position - ventilation_position) | abs <= position_tolerance
+    }}
+
+  before_shading_end: >
+    {{ now().strftime('%H:%M:%S') < shading_end_time }}
+
+  lux: >
+    {{ states(illuminance_sensor) | float(-1) }}
+
+  weather: >
+    {{ states(weather_condition_sensor) }}
+
+  cloud: >
+    {{ states(cloud_cover_sensor) | float(-1) }}
+
+  outside_temperature: >
+    {{ states(outside_temperature_sensor) | float(-99) }}
+
+  inside_temperature: >
+    {{ states(inside_temperature_sensor) | float(-99) }}
+
+  elevation: >
+    {{ state_attr('sun.sun', 'elevation') | float(-90) }}
+
+  azimuth: >
+    {{ state_attr('sun.sun', 'azimuth') | float(-1) }}
+
   active_lux_threshold: >
     {{
       lux_threshold_cloud_0_20 if cloud <= 20 else
@@ -450,35 +528,119 @@ variables:
       lux_threshold_cloud_41_60 if cloud <= 60 else
       lux_threshold_cloud_61_100
     }}
+
   automatic_conditions_now: >
     {{
-      lux >= 0 and cloud >= 0
+      lux >= 0
+      and cloud >= 0
       and weather in allowed_weather_states
       and cloud <= maximum_cloud_cover
       and elevation >= minimum_elevation
       and azimuth >= minimum_azimuth
       and azimuth <= maximum_azimuth
       and lux >= active_lux_threshold
-      and (outside_temperature > minimum_outside_temperature or inside_temperature > minimum_inside_temperature)
+      and (
+        outside_temperature > minimum_outside_temperature
+        or inside_temperature > minimum_inside_temperature
+      )
     }}
 
 actions:
   - choose:
+      ############################################################
+      # 1. Manuellen Hitzeschutz zur festgelegten Uhrzeit ausschalten
+      ############################################################
       - conditions:
-          - condition: trigger
-            id: manual_boost_off_time
+          - condition: template
+            value_template: "{{ trigger_id == 'manual_boost_off_time' }}"
         sequence:
           - action: input_boolean.turn_off
             target:
               entity_id: !input manual_boost_switch
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{
+                        not shading_memory_active
+                        and (
+                          not only_open_if_automation_shaded
+                          or is_at_shading_position
+                        )
+                      }}
+                sequence:
+                  - action: cover.set_cover_position
+                    target:
+                      entity_id: !input cover_entity
+                    data:
+                      position: "{{ open_position }}"
+
           - stop: Manueller Hitzeschutz wurde automatisch ausgeschaltet.
 
+      ############################################################
+      # 2. Automatische Beschattung zur Endzeit beenden
+      ############################################################
       - conditions:
           - condition: template
-            value_template: "{{ is_state(master_switch, 'off') or is_state(local_switch, 'off') }}"
+            value_template: "{{ trigger_id == 'shading_end_time' }}"
         sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ has_shading_memory_helper }}"
+                sequence:
+                  - action: input_boolean.turn_off
+                    target:
+                      entity_id: "{{ shading_memory_helper }}"
+
+          - action: input_boolean.turn_off
+            target:
+              entity_id: !input manual_boost_switch
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{
+                        not only_open_if_automation_shaded
+                        or is_at_shading_position
+                        or shading_memory_active
+                      }}
+                sequence:
+                  - action: cover.set_cover_position
+                    target:
+                      entity_id: !input cover_entity
+                    data:
+                      position: "{{ open_position }}"
+
+          - stop: Automatische Beschattung wurde zur Endzeit beendet.
+
+      ############################################################
+      # 3. Master- oder Raumschalter ausgeschaltet
+      ############################################################
+      - conditions:
+          - condition: template
+            value_template: >
+              {{
+                is_state(master_switch, 'off')
+                or is_state(local_switch, 'off')
+              }}
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ has_shading_memory_helper }}"
+                sequence:
+                  - action: input_boolean.turn_off
+                    target:
+                      entity_id: "{{ shading_memory_helper }}"
+
           - stop: Sonnenschutz ist über einen Schalter deaktiviert.
 
+      ############################################################
+      # 4. Fenster geöffnet: Rollo vorübergehend öffnen
+      ############################################################
       - conditions:
           - condition: template
             value_template: "{{ is_state(window_contact, 'on') }}"
@@ -489,15 +651,24 @@ actions:
             data:
               position: "{{ open_position }}"
 
+          - stop: Fenster ist geöffnet. Rollo wurde geöffnet.
+
+      ############################################################
+      # 5. Nacht-/Geschlossen-Sperre
+      ############################################################
       - conditions:
           - condition: template
             value_template: "{{ is_fully_closed }}"
         sequence:
           - stop: Rollo befindet sich in der Geschlossen-/Nachtposition.
 
+      ############################################################
+      # 6. Markise ausgefahren: Rollo vorübergehend öffnen
+      ############################################################
       - conditions:
           - condition: template
-            value_template: "{{ has_awning and not is_state(awning, 'closed') }}"
+            value_template: >
+              {{ has_awning and not is_state(awning, 'closed') }}
         sequence:
           - action: cover.set_cover_position
             target:
@@ -505,11 +676,22 @@ actions:
             data:
               position: "{{ open_position }}"
 
+          - stop: Markise ist ausgefahren. Rollo wurde geöffnet.
+
+      ############################################################
+      # 7. Manueller Hitzeschutz
+      ############################################################
       - conditions:
           - condition: template
             value_template: >
-              {{ is_state(manual_boost_switch, 'on') and is_state(window_contact, 'off')
-                 and (not has_awning or is_state(awning, 'closed')) }}
+              {{
+                is_state(manual_boost_switch, 'on')
+                and is_state(window_contact, 'off')
+                and (
+                  not has_awning
+                  or is_state(awning, 'closed')
+                )
+              }}
         sequence:
           - action: cover.set_cover_position
             target:
@@ -517,47 +699,100 @@ actions:
             data:
               position: "{{ ventilation_position }}"
 
+          - stop: Manueller Hitzeschutz ist aktiv.
+
+      ############################################################
+      # 8. Gespeicherte Beschattung wiederherstellen
+      #
+      # Zum Beispiel:
+      # - Fenster wurde wieder geschlossen
+      # - Markise wurde wieder eingefahren
+      # - Home Assistant wurde neu gestartet
+      ############################################################
       - conditions:
           - condition: template
             value_template: >
               {{
-                trigger.id == 'automatic_sun_on'
-                or (
-                  trigger.id in ['control_changed', 'window_changed', 'awning_changed',
-                                 'home_assistant_start', 'periodic_check']
-                  and automatic_conditions_now
+                shading_memory_active
+                and before_shading_end
+                and is_state(window_contact, 'off')
+                and (
+                  not has_awning
+                  or is_state(awning, 'closed')
                 )
               }}
+        sequence:
+          - action: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: "{{ ventilation_position }}"
+
+          - stop: Gespeicherte Beschattung wurde wiederhergestellt.
+
+      ############################################################
+      # 9. Neue automatische Beschattung starten
+      #
+      # Diese Entscheidung ist streng:
+      # Wetter + Wolken + Lux + Sonnenstand + Temperatur
+      ############################################################
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger_id == 'automatic_sun_on' }}"
+
+          - condition: template
+            value_template: "{{ before_shading_end }}"
+
+          - condition: template
+            value_template: "{{ automatic_conditions_now }}"
+
           - condition: template
             value_template: "{{ is_state(window_contact, 'off') }}"
+
           - condition: template
-            value_template: "{{ not has_awning or is_state(awning, 'closed') }}"
+            value_template: >
+              {{ not has_awning or is_state(awning, 'closed') }}
         sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ has_shading_memory_helper }}"
+                sequence:
+                  - action: input_boolean.turn_on
+                    target:
+                      entity_id: "{{ shading_memory_helper }}"
+
           - action: cover.set_cover_position
             target:
               entity_id: !input cover_entity
             data:
               position: "{{ ventilation_position }}"
 
+          - stop: Automatische Beschattung wurde gestartet.
+
+      ############################################################
+      # 10. Manueller Hitzeschutz wurde ausgeschaltet
+      ############################################################
       - conditions:
           - condition: template
             value_template: >
               {{
-                trigger.id == 'automatic_sun_off'
-                or (
-                  trigger.id in ['control_changed', 'manual_boost_changed', 'window_changed',
-                                 'awning_changed', 'home_assistant_start', 'periodic_check']
-                  and not automatic_conditions_now
+                trigger_id == 'manual_boost_changed'
+                and is_state(manual_boost_switch, 'off')
+                and not shading_memory_active
+                and (
+                  not only_open_if_automation_shaded
+                  or is_at_shading_position
                 )
               }}
-          - condition: template
-            value_template: "{{ not only_open_if_automation_shaded or is_at_shading_position }}"
         sequence:
           - action: cover.set_cover_position
             target:
               entity_id: !input cover_entity
             data:
               position: "{{ open_position }}"
+
+          - stop: Manueller Hitzeschutz wurde beendet.
 
     default:
       - stop: Keine Aktion erforderlich.
