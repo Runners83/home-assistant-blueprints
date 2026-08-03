@@ -1,15 +1,18 @@
 blueprint:
-  name: Intelligenter Sonnenschutz – DWD, Lux, Sonnenstand, Lüftung und Markise V2
+  name: Intelligenter Sonnenschutz V2 – DWD, Lux, Sonnenstand, Fenster und Markise
   description: >
-    Version 2.0: Startet die Beschattung nur bei passenden Wetter-, Bewölkungs-,
-    Helligkeits-, Sonnenstands- und Temperaturbedingungen. Sobald die Beschattung
-    gestartet wurde, bleibt sie unabhängig von vorüberziehenden Wolken oder
-    sinkenden Luxwerten aktiv. Das Rollo öffnet zur eingestellten Endzeit oder
-    vorübergehend bei geöffnetem Fenster beziehungsweise ausgefahrener Markise.
-    Mit einem optionalen input_boolean wird der aktive Beschattungszustand
-    zuverlässig gespeichert.
-  domain: automation
+    Version 2.0.0. Startet die Beschattung nur bei passenden Wetter-, Bewölkungs-,
+    Helligkeits-, Sonnenstands- und Temperaturbedingungen. Eine bereits erreichte
+    Beschattungsposition bleibt auch bei Wolken und schwankenden Luxwerten erhalten.
+    Die aktuelle Rollo-Position bestimmt das Verhalten: geschlossen = Nacht/Schlaf,
+    offen = Sonnenschutz prüfen, Beschattungsposition = Automatik halten und jede
+    andere Zwischenposition = manuelle Position respektieren.
 
+    Fenster und optionale Markise öffnen das Rollo vorübergehend. Vorher wird die
+    aktuelle Rollo-Position in einer dynamischen Szene gespeichert und nach dem
+    Schließen des Fensters beziehungsweise Einfahren der Markise wiederhergestellt.
+    Die Szene ist nur bis zum nächsten Neustart von Home Assistant verfügbar.
+  domain: automation
   homeassistant:
     min_version: 2024.6.0
 
@@ -44,24 +47,12 @@ blueprint:
     shading_end_time:
       name: Ende der automatischen Beschattung
       description: >
-        Zu dieser Uhrzeit wird die automatische Beschattung beendet und das
-        Rollo wieder geöffnet.
+        Zu dieser Uhrzeit wird ein Rollo aus der Beschattungsposition vollständig
+        geöffnet. Geschlossene oder manuell gewählte Zwischenpositionen bleiben
+        unverändert.
       default: "18:00:00"
       selector:
         time:
-
-    shading_memory_helper:
-      name: Sonnenschutz-Speicher
-      description: >
-        Empfohlen: Für jedes Rollo einen eigenen input_boolean-Helfer auswählen.
-        Dieser merkt sich, dass die automatische Beschattung gestartet wurde.
-        Dadurch fährt das Rollo nach dem Schließen eines Fensters oder dem
-        Einfahren der Markise zuverlässig wieder in die Beschattungsposition.
-      default: []
-      selector:
-        entity:
-          filter:
-            - domain: input_boolean
 
     cover_entity:
       name: Rollo
@@ -80,6 +71,7 @@ blueprint:
 
     awning:
       name: Markise (optional)
+      description: Leer lassen, wenn für diesen Raum keine Markise berücksichtigt wird.
       default: []
       selector:
         entity:
@@ -96,7 +88,7 @@ blueprint:
 
     weather_condition_sensor:
       name: DWD-Wetterzustand
-      description: Zum Beispiel sensor.herne_wetterzustand
+      description: Zum Beispiel sensor.herne_wetterzustand.
       selector:
         entity:
           filter:
@@ -104,6 +96,7 @@ blueprint:
 
     cloud_cover_sensor:
       name: DWD-Bewölkungsgrad
+      description: Numerischer Wert von 0 bis 100 Prozent.
       selector:
         entity:
           filter:
@@ -127,6 +120,9 @@ blueprint:
 
     minimum_outside_temperature:
       name: Mindest-Außentemperatur
+      description: >
+        Die Beschattung darf starten, wenn Außen- ODER Innentemperatur über dem
+        jeweiligen Grenzwert liegt.
       default: 20
       selector:
         number:
@@ -177,6 +173,7 @@ blueprint:
 
     maximum_cloud_cover:
       name: Maximal erlaubter Bewölkungsgrad
+      description: Oberhalb dieses Wertes startet keine neue Beschattung.
       default: 70
       selector:
         number:
@@ -217,6 +214,7 @@ blueprint:
 
     lux_threshold_cloud_61_100:
       name: Lux-Schwelle bei 61–100 % Bewölkung
+      description: Wirkt nur bis zum maximal erlaubten Bewölkungsgrad.
       default: 52000
       selector:
         number:
@@ -226,7 +224,7 @@ blueprint:
           unit_of_measurement: lx
 
     allowed_weather_states:
-      name: Erlaubte Wetterzustände
+      name: Erlaubte Wetterzustände für den Start
       default:
         - sunny
         - partlycloudy
@@ -255,26 +253,26 @@ blueprint:
 
     sun_on_delay:
       name: Einschaltverzögerung
+      description: >
+        Alle Startbedingungen müssen für diese Dauer ununterbrochen erfüllt sein.
       default:
         minutes: 10
       selector:
         duration:
 
     sun_off_delay:
-      name: Ausschaltverzögerung – Kompatibilität
+      name: Ausschaltverzögerung – nur zur Kompatibilität
       description: >
-        Diese Einstellung wird in Version 2 nicht mehr verwendet. Sie bleibt
-        enthalten, damit bestehende Automationen kompatibel bleiben.
+        In Version 2 nicht verwendet. Eine aktive Beschattung wird nicht aufgrund
+        von Wolken oder sinkenden Luxwerten beendet.
       default:
         minutes: 20
       selector:
         duration:
 
     off_hysteresis_percent:
-      name: Helligkeits-Hysterese – Kompatibilität
-      description: >
-        Diese Einstellung wird in Version 2 nicht mehr verwendet. Nach Beginn
-        der Beschattung führen sinkende Luxwerte nicht mehr zum Öffnen.
+      name: Helligkeits-Hysterese – nur zur Kompatibilität
+      description: In Version 2 nicht verwendet.
       default: 25
       selector:
         number:
@@ -315,6 +313,8 @@ blueprint:
 
     position_tolerance:
       name: Positionstoleranz
+      description: >
+        Toleranz zur Erkennung von offen, geschlossen und Beschattungsposition.
       default: 3
       selector:
         number:
@@ -323,11 +323,21 @@ blueprint:
           step: 1
           unit_of_measurement: "%"
 
-    only_open_if_automation_shaded:
-      name: Beim Ende nur aus Beschattungsposition öffnen
+    cover_open_settle_delay:
+      name: Wartezeit nach vollständigem manuellen Öffnen
       description: >
-        Verhindert, dass ein manuell geschlossenes oder anders positioniertes
-        Rollo zur Endzeit ungefragt geöffnet wird.
+        Erst danach wird geprüft, ob das vollständig geöffnete Rollo wieder auf
+        die Beschattungsposition fahren soll.
+      default:
+        seconds: 10
+      selector:
+        duration:
+
+    only_open_if_automation_shaded:
+      name: Zur Endzeit nur aus Beschattungsposition öffnen
+      description: >
+        Empfohlen: eingeschaltet lassen. Dadurch bleiben Nachtposition und manuelle
+        Zwischenpositionen unverändert.
       default: true
       selector:
         boolean:
@@ -344,22 +354,23 @@ trigger_variables:
   cloud_cover_sensor_t: !input cloud_cover_sensor
   outside_temperature_sensor_t: !input outside_temperature_sensor
   inside_temperature_sensor_t: !input inside_temperature_sensor
-
   minimum_outside_temperature_t: !input minimum_outside_temperature
   minimum_inside_temperature_t: !input minimum_inside_temperature
   minimum_elevation_t: !input minimum_elevation
   minimum_azimuth_t: !input minimum_azimuth
   maximum_azimuth_t: !input maximum_azimuth
   maximum_cloud_cover_t: !input maximum_cloud_cover
-
   lux_threshold_cloud_0_20_t: !input lux_threshold_cloud_0_20
   lux_threshold_cloud_21_40_t: !input lux_threshold_cloud_21_40
   lux_threshold_cloud_41_60_t: !input lux_threshold_cloud_41_60
   lux_threshold_cloud_61_100_t: !input lux_threshold_cloud_61_100
-
   allowed_weather_states_t: !input allowed_weather_states
+  cover_entity_t: !input cover_entity
+  open_position_t: !input open_position
+  position_tolerance_t: !input position_tolerance
 
 triggers:
+  # Strenger Starttrigger: nur wenn alle Sonnenbedingungen stabil erfüllt sind.
   - trigger: template
     id: automatic_sun_on
     value_template: >
@@ -370,14 +381,12 @@ triggers:
       {% set inside = states(inside_temperature_sensor_t) | float(-99) %}
       {% set elevation = state_attr('sun.sun', 'elevation') | float(-90) %}
       {% set azimuth = state_attr('sun.sun', 'azimuth') | float(-1) %}
-
       {% set threshold =
         lux_threshold_cloud_0_20_t if cloud <= 20 else
         lux_threshold_cloud_21_40_t if cloud <= 40 else
         lux_threshold_cloud_41_60_t if cloud <= 60 else
         lux_threshold_cloud_61_100_t
       %}
-
       {{
         lux >= 0
         and cloud >= 0
@@ -393,6 +402,21 @@ triggers:
         )
       }}
     for: !input sun_on_delay
+
+  # Erkennt, dass das Rollo vollständig geöffnet wurde.
+  - trigger: template
+    id: cover_fully_opened
+    value_template: >
+      {% set position = state_attr(cover_entity_t, 'current_position') | int(-1) %}
+      {{
+        position != -1
+        and (position - open_position_t) | abs <= position_tolerance_t
+      }}
+
+  # Regelmäßige Nachprüfung nur zum STARTEN, niemals zum Hochfahren.
+  - trigger: time_pattern
+    minutes: "/10"
+    id: periodic_start_check
 
   - trigger: state
     entity_id: !input master_switch
@@ -416,11 +440,23 @@ triggers:
 
   - trigger: state
     entity_id: !input window_contact
-    id: window_changed
+    to: "on"
+    id: window_opened
+
+  - trigger: state
+    entity_id: !input window_contact
+    to: "off"
+    id: window_closed
 
   - trigger: state
     entity_id: !input awning
-    id: awning_changed
+    from: "closed"
+    id: awning_opened
+
+  - trigger: state
+    entity_id: !input awning
+    to: "closed"
+    id: awning_closed
 
   - trigger: homeassistant
     event: start
@@ -430,7 +466,6 @@ variables:
   master_switch: !input master_switch
   local_switch: !input local_switch
   manual_boost_switch: !input manual_boost_switch
-  shading_memory_helper: !input shading_memory_helper
   shading_end_time: !input shading_end_time
 
   cover_entity: !input cover_entity
@@ -454,7 +489,6 @@ variables:
   lux_threshold_cloud_21_40: !input lux_threshold_cloud_21_40
   lux_threshold_cloud_41_60: !input lux_threshold_cloud_41_60
   lux_threshold_cloud_61_100: !input lux_threshold_cloud_61_100
-
   allowed_weather_states: !input allowed_weather_states
 
   ventilation_position: !input ventilation_position
@@ -469,18 +503,8 @@ variables:
   has_awning: >
     {{ awning != [] and awning != '' and awning is not none }}
 
-  has_shading_memory_helper: >
-    {{
-      shading_memory_helper != []
-      and shading_memory_helper != ''
-      and shading_memory_helper is not none
-    }}
-
-  shading_memory_active: >
-    {{
-      has_shading_memory_helper
-      and is_state(shading_memory_helper, 'on')
-    }}
+  awning_is_closed: >
+    {{ not has_awning or is_state(awning, 'closed') }}
 
   current_position: >
     {{ state_attr(cover_entity, 'current_position') | int(-1) }}
@@ -491,35 +515,36 @@ variables:
       and (current_position - closed_position) | abs <= position_tolerance
     }}
 
+  is_fully_open: >
+    {{
+      current_position != -1
+      and (current_position - open_position) | abs <= position_tolerance
+    }}
+
   is_at_shading_position: >
     {{
       current_position != -1
       and (current_position - ventilation_position) | abs <= position_tolerance
     }}
 
+  is_manual_intermediate_position: >
+    {{
+      current_position != -1
+      and not is_fully_closed
+      and not is_fully_open
+      and not is_at_shading_position
+    }}
+
   before_shading_end: >
-    {{ now().strftime('%H:%M:%S') < shading_end_time }}
+    {{ now() < today_at(shading_end_time) }}
 
-  lux: >
-    {{ states(illuminance_sensor) | float(-1) }}
-
-  weather: >
-    {{ states(weather_condition_sensor) }}
-
-  cloud: >
-    {{ states(cloud_cover_sensor) | float(-1) }}
-
-  outside_temperature: >
-    {{ states(outside_temperature_sensor) | float(-99) }}
-
-  inside_temperature: >
-    {{ states(inside_temperature_sensor) | float(-99) }}
-
-  elevation: >
-    {{ state_attr('sun.sun', 'elevation') | float(-90) }}
-
-  azimuth: >
-    {{ state_attr('sun.sun', 'azimuth') | float(-1) }}
+  lux: "{{ states(illuminance_sensor) | float(-1) }}"
+  weather: "{{ states(weather_condition_sensor) }}"
+  cloud: "{{ states(cloud_cover_sensor) | float(-1) }}"
+  outside_temperature: "{{ states(outside_temperature_sensor) | float(-99) }}"
+  inside_temperature: "{{ states(inside_temperature_sensor) | float(-99) }}"
+  elevation: "{{ state_attr('sun.sun', 'elevation') | float(-90) }}"
+  azimuth: "{{ state_attr('sun.sun', 'azimuth') | float(-1) }}"
 
   active_lux_threshold: >
     {{
@@ -545,11 +570,24 @@ variables:
       )
     }}
 
+  # Dynamische Szenen zum Merken der Position vor Fenster-/Markisenöffnung.
+  snapshot_base: >
+    {{
+      cover_entity
+      | replace('cover.', '')
+      | replace('.', '_')
+      | replace('-', '_')
+    }}
+  window_snapshot_scene: "scene.sunshade_{{ snapshot_base }}_before_window"
+  window_snapshot_id: "sunshade_{{ snapshot_base }}_before_window"
+  awning_snapshot_scene: "scene.sunshade_{{ snapshot_base }}_before_awning"
+  awning_snapshot_id: "sunshade_{{ snapshot_base }}_before_awning"
+
 actions:
   - choose:
-      ############################################################
+      ######################################################################
       # 1. Manuellen Hitzeschutz zur festgelegten Uhrzeit ausschalten
-      ############################################################
+      ######################################################################
       - conditions:
           - condition: template
             value_template: "{{ trigger_id == 'manual_boost_off_time' }}"
@@ -563,12 +601,19 @@ actions:
                   - condition: template
                     value_template: >
                       {{
-                        not shading_memory_active
-                        and (
-                          not only_open_if_automation_shaded
-                          or is_at_shading_position
-                        )
+                        is_at_shading_position
+                        and before_shading_end
+                        and automatic_conditions_now
                       }}
+                sequence:
+                  - stop: >
+                      Manueller Hitzeschutz beendet; automatische
+                      Beschattungsbedingungen bestehen weiterhin.
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_at_shading_position }}"
                 sequence:
                   - action: cover.set_cover_position
                     target:
@@ -578,22 +623,13 @@ actions:
 
           - stop: Manueller Hitzeschutz wurde automatisch ausgeschaltet.
 
-      ############################################################
+      ######################################################################
       # 2. Automatische Beschattung zur Endzeit beenden
-      ############################################################
+      ######################################################################
       - conditions:
           - condition: template
             value_template: "{{ trigger_id == 'shading_end_time' }}"
         sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ has_shading_memory_helper }}"
-                sequence:
-                  - action: input_boolean.turn_off
-                    target:
-                      entity_id: "{{ shading_memory_helper }}"
-
           - action: input_boolean.turn_off
             target:
               entity_id: !input manual_boost_switch
@@ -605,7 +641,6 @@ actions:
                       {{
                         not only_open_if_automation_shaded
                         or is_at_shading_position
-                        or shading_memory_active
                       }}
                 sequence:
                   - action: cover.set_cover_position
@@ -614,11 +649,11 @@ actions:
                     data:
                       position: "{{ open_position }}"
 
-          - stop: Automatische Beschattung wurde zur Endzeit beendet.
+          - stop: Beschattungs-Endzeit wurde erreicht.
 
-      ############################################################
-      # 3. Master- oder Raumschalter ausgeschaltet
-      ############################################################
+      ######################################################################
+      # 3. Master- oder Raumschalter AUS: keine automatische Bewegung
+      ######################################################################
       - conditions:
           - condition: template
             value_template: >
@@ -627,70 +662,242 @@ actions:
                 or is_state(local_switch, 'off')
               }}
         sequence:
+          - stop: Sonnenschutz ist über einen Schalter deaktiviert.
+
+      ######################################################################
+      # 4. Fenster wird geöffnet:
+      #    aktuelle Position speichern und Rollo vollständig öffnen
+      ######################################################################
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger_id == 'window_opened' }}"
+        sequence:
+          - action: scene.create
+            data:
+              scene_id: "{{ window_snapshot_id }}"
+              snapshot_entities:
+                - !input cover_entity
+
+          - action: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: "{{ open_position }}"
+
+          - stop: Fenster geöffnet; vorherige Rollo-Position wurde gespeichert.
+
+      ######################################################################
+      # 5. Markise wird ausgefahren:
+      #    aktuelle Position speichern und Rollo vollständig öffnen
+      ######################################################################
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ trigger_id == 'awning_opened' and has_awning }}
+        sequence:
+          - action: scene.create
+            data:
+              scene_id: "{{ awning_snapshot_id }}"
+              snapshot_entities:
+                - !input cover_entity
+
+          - action: cover.set_cover_position
+            target:
+              entity_id: !input cover_entity
+            data:
+              position: "{{ open_position }}"
+
+          - stop: Markise ausgefahren; vorherige Rollo-Position wurde gespeichert.
+
+      ######################################################################
+      # 6. Fenster wird geschlossen:
+      #    vorherige Position wiederherstellen, sofern Markise eingefahren ist
+      ######################################################################
+      - conditions:
+          - condition: template
+            value_template: >
+              {{
+                trigger_id == 'window_closed'
+                and awning_is_closed
+              }}
+        sequence:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ has_shading_memory_helper }}"
+                    value_template: >
+                      {{
+                        states(window_snapshot_scene)
+                        not in ['unknown', 'unavailable']
+                      }}
                 sequence:
-                  - action: input_boolean.turn_off
+                  - action: scene.turn_on
                     target:
-                      entity_id: "{{ shading_memory_helper }}"
+                      entity_id: "{{ window_snapshot_scene }}"
 
-          - stop: Sonnenschutz ist über einen Schalter deaktiviert.
+                  - delay:
+                      seconds: 3
 
-      ############################################################
-      # 4. Fenster geöffnet: Rollo vorübergehend öffnen
-      ############################################################
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: >
+                              {{
+                                not before_shading_end
+                                and (
+                                  state_attr(cover_entity, 'current_position')
+                                  | int(-1)
+                                  - ventilation_position
+                                ) | abs <= position_tolerance
+                              }}
+                        sequence:
+                          - action: cover.set_cover_position
+                            target:
+                              entity_id: !input cover_entity
+                            data:
+                              position: "{{ open_position }}"
+
+                  - stop: Position vor der Fensteröffnung wurde wiederhergestellt.
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{
+                        before_shading_end
+                        and automatic_conditions_now
+                      }}
+                sequence:
+                  - action: cover.set_cover_position
+                    target:
+                      entity_id: !input cover_entity
+                    data:
+                      position: "{{ ventilation_position }}"
+
+          - stop: Fenster geschlossen; keine gespeicherte Position vorhanden.
+
+      ######################################################################
+      # 7. Markise wird eingefahren:
+      #    vorherige Position wiederherstellen, sofern Fenster geschlossen ist
+      ######################################################################
+      - conditions:
+          - condition: template
+            value_template: >
+              {{
+                trigger_id == 'awning_closed'
+                and is_state(window_contact, 'off')
+              }}
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{
+                        states(awning_snapshot_scene)
+                        not in ['unknown', 'unavailable']
+                      }}
+                sequence:
+                  - action: scene.turn_on
+                    target:
+                      entity_id: "{{ awning_snapshot_scene }}"
+
+                  - delay:
+                      seconds: 3
+
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: >
+                              {{
+                                not before_shading_end
+                                and (
+                                  state_attr(cover_entity, 'current_position')
+                                  | int(-1)
+                                  - ventilation_position
+                                ) | abs <= position_tolerance
+                              }}
+                        sequence:
+                          - action: cover.set_cover_position
+                            target:
+                              entity_id: !input cover_entity
+                            data:
+                              position: "{{ open_position }}"
+
+                  - stop: Position vor dem Ausfahren der Markise wurde wiederhergestellt.
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{
+                        before_shading_end
+                        and automatic_conditions_now
+                      }}
+                sequence:
+                  - action: cover.set_cover_position
+                    target:
+                      entity_id: !input cover_entity
+                    data:
+                      position: "{{ ventilation_position }}"
+
+          - stop: Markise eingefahren; keine gespeicherte Position vorhanden.
+
+      ######################################################################
+      # 8. Fenster ist weiterhin geöffnet: Rollo bleibt offen
+      ######################################################################
       - conditions:
           - condition: template
             value_template: "{{ is_state(window_contact, 'on') }}"
         sequence:
-          - action: cover.set_cover_position
-            target:
-              entity_id: !input cover_entity
-            data:
-              position: "{{ open_position }}"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ not is_fully_open }}"
+                sequence:
+                  - action: cover.set_cover_position
+                    target:
+                      entity_id: !input cover_entity
+                    data:
+                      position: "{{ open_position }}"
+          - stop: Fenster ist geöffnet.
 
-          - stop: Fenster ist geöffnet. Rollo wurde geöffnet.
+      ######################################################################
+      # 9. Markise ist weiterhin ausgefahren: Rollo bleibt offen
+      ######################################################################
+      - conditions:
+          - condition: template
+            value_template: "{{ has_awning and not awning_is_closed }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ not is_fully_open }}"
+                sequence:
+                  - action: cover.set_cover_position
+                    target:
+                      entity_id: !input cover_entity
+                    data:
+                      position: "{{ open_position }}"
+          - stop: Markise ist ausgefahren.
 
-      ############################################################
-      # 5. Nacht-/Geschlossen-Sperre
-      ############################################################
+      ######################################################################
+      # 10. Geschlossen/Nacht: Automatik greift nicht ein
+      ######################################################################
       - conditions:
           - condition: template
             value_template: "{{ is_fully_closed }}"
         sequence:
-          - stop: Rollo befindet sich in der Geschlossen-/Nachtposition.
+          - stop: Rollo ist vollständig geschlossen; Nacht-/Schlafposition wird respektiert.
 
-      ############################################################
-      # 6. Markise ausgefahren: Rollo vorübergehend öffnen
-      ############################################################
-      - conditions:
-          - condition: template
-            value_template: >
-              {{ has_awning and not is_state(awning, 'closed') }}
-        sequence:
-          - action: cover.set_cover_position
-            target:
-              entity_id: !input cover_entity
-            data:
-              position: "{{ open_position }}"
-
-          - stop: Markise ist ausgefahren. Rollo wurde geöffnet.
-
-      ############################################################
-      # 7. Manueller Hitzeschutz
-      ############################################################
+      ######################################################################
+      # 11. Manueller Hitzeschutz
+      ######################################################################
       - conditions:
           - condition: template
             value_template: >
               {{
                 is_state(manual_boost_switch, 'on')
                 and is_state(window_contact, 'off')
-                and (
-                  not has_awning
-                  or is_state(awning, 'closed')
-                )
+                and awning_is_closed
               }}
         sequence:
           - action: cover.set_cover_position
@@ -698,47 +905,36 @@ actions:
               entity_id: !input cover_entity
             data:
               position: "{{ ventilation_position }}"
-
           - stop: Manueller Hitzeschutz ist aktiv.
 
-      ############################################################
-      # 8. Gespeicherte Beschattung wiederherstellen
-      #
-      # Zum Beispiel:
-      # - Fenster wurde wieder geschlossen
-      # - Markise wurde wieder eingefahren
-      # - Home Assistant wurde neu gestartet
-      ############################################################
+      ######################################################################
+      # 12. Manuelle Zwischenpositionen respektieren
+      ######################################################################
       - conditions:
+          - condition: template
+            value_template: "{{ is_manual_intermediate_position }}"
+        sequence:
+          - stop: Manuell gewählte Zwischenposition wird respektiert.
+
+      ######################################################################
+      # 13. Rollo wurde vollständig geöffnet:
+      #     Nach kurzer Motor-Wartezeit Sonnenschutz erneut prüfen
+      ######################################################################
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger_id == 'cover_fully_opened' }}"
+        sequence:
+          - delay: !input cover_open_settle_delay
+
+          - variables:
+              position_after_wait: >
+                {{ state_attr(cover_entity, 'current_position') | int(-1) }}
+
           - condition: template
             value_template: >
               {{
-                shading_memory_active
-                and before_shading_end
-                and is_state(window_contact, 'off')
-                and (
-                  not has_awning
-                  or is_state(awning, 'closed')
-                )
+                (position_after_wait - open_position) | abs <= position_tolerance
               }}
-        sequence:
-          - action: cover.set_cover_position
-            target:
-              entity_id: !input cover_entity
-            data:
-              position: "{{ ventilation_position }}"
-
-          - stop: Gespeicherte Beschattung wurde wiederhergestellt.
-
-      ############################################################
-      # 9. Neue automatische Beschattung starten
-      #
-      # Diese Entscheidung ist streng:
-      # Wetter + Wolken + Lux + Sonnenstand + Temperatur
-      ############################################################
-      - conditions:
-          - condition: template
-            value_template: "{{ trigger_id == 'automatic_sun_on' }}"
 
           - condition: template
             value_template: "{{ before_shading_end }}"
@@ -750,17 +946,7 @@ actions:
             value_template: "{{ is_state(window_contact, 'off') }}"
 
           - condition: template
-            value_template: >
-              {{ not has_awning or is_state(awning, 'closed') }}
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ has_shading_memory_helper }}"
-                sequence:
-                  - action: input_boolean.turn_on
-                    target:
-                      entity_id: "{{ shading_memory_helper }}"
+            value_template: "{{ awning_is_closed }}"
 
           - action: cover.set_cover_position
             target:
@@ -768,31 +954,47 @@ actions:
             data:
               position: "{{ ventilation_position }}"
 
-          - stop: Automatische Beschattung wurde gestartet.
+          - stop: Vollständig geöffnetes Rollo wurde auf Sonnenschutzposition gesetzt.
 
-      ############################################################
-      # 10. Manueller Hitzeschutz wurde ausgeschaltet
-      ############################################################
+      ######################################################################
+      # 14. Neue automatische Beschattung starten
+      #     Gilt für Template-Trigger und periodische Nachprüfung.
+      ######################################################################
       - conditions:
           - condition: template
             value_template: >
               {{
-                trigger_id == 'manual_boost_changed'
-                and is_state(manual_boost_switch, 'off')
-                and not shading_memory_active
-                and (
-                  not only_open_if_automation_shaded
-                  or is_at_shading_position
-                )
+                trigger_id in [
+                  'automatic_sun_on',
+                  'periodic_start_check',
+                  'control_changed',
+                  'home_assistant_start',
+                  'manual_run'
+                ]
               }}
+
+          - condition: template
+            value_template: "{{ before_shading_end }}"
+
+          - condition: template
+            value_template: "{{ automatic_conditions_now }}"
+
+          - condition: template
+            value_template: "{{ is_fully_open }}"
+
+          - condition: template
+            value_template: "{{ is_state(window_contact, 'off') }}"
+
+          - condition: template
+            value_template: "{{ awning_is_closed }}"
         sequence:
           - action: cover.set_cover_position
             target:
               entity_id: !input cover_entity
             data:
-              position: "{{ open_position }}"
+              position: "{{ ventilation_position }}"
 
-          - stop: Manueller Hitzeschutz wurde beendet.
+          - stop: Automatische Beschattung wurde gestartet.
 
     default:
       - stop: Keine Aktion erforderlich.
