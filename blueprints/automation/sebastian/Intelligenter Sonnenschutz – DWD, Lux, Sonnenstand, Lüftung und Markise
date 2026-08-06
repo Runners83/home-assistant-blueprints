@@ -1,7 +1,7 @@
 blueprint:
-  name: Intelligenter Sonnenschutz V2 – DWD, Lux, Sonnenstand, Fenster und Markise
+  name: Intelligenter Sonnenschutz V2.0.1 – DWD, Lux, Sonnenstand, Fenster und Markise
   description: >
-    Version 2.0.0. Startet die Beschattung nur bei passenden Wetter-, Bewölkungs-,
+    Version 2.0.1. Startet die Beschattung nur bei passenden Wetter-, Bewölkungs-,
     Helligkeits-, Sonnenstands- und Temperaturbedingungen. Eine bereits erreichte
     Beschattungsposition bleibt auch bei Wolken und schwankenden Luxwerten erhalten.
     Die aktuelle Rollo-Position bestimmt das Verhalten: geschlossen = Nacht/Schlaf,
@@ -342,11 +342,25 @@ blueprint:
       selector:
         boolean:
 
+    shading_end_max_position:
+      name: Maximale Position, die zur Endzeit noch als Beschattung gilt
+      description: >
+        Manche Rollos melden die angefahrene Position nicht exakt. Ein Rollo wird
+        zur Endzeit geöffnet, wenn es oberhalb der Geschlossenposition und höchstens
+        auf diesem Wert steht. Manuelle Positionen wie 50 Prozent bleiben erhalten.
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 80
+          step: 1
+          unit_of_measurement: "%"
+
 mode: restart
 max_exceeded: silent
 
 trace:
-  stored_traces: 30
+  stored_traces: 100
 
 trigger_variables:
   illuminance_sensor_t: !input illuminance_sensor
@@ -496,6 +510,7 @@ variables:
   closed_position: !input closed_position
   position_tolerance: !input position_tolerance
   only_open_if_automation_shaded: !input only_open_if_automation_shaded
+  shading_end_max_position: !input shading_end_max_position
 
   trigger_id: >
     {{ trigger.id if trigger is defined and trigger.id is defined else 'manual_run' }}
@@ -641,6 +656,10 @@ actions:
                       {{
                         not only_open_if_automation_shaded
                         or is_at_shading_position
+                        or (
+                          current_position > closed_position + position_tolerance
+                          and current_position <= shading_end_max_position
+                        )
                       }}
                 sequence:
                   - action: cover.set_cover_position
@@ -842,45 +861,10 @@ actions:
           - stop: Markise eingefahren; keine gespeicherte Position vorhanden.
 
       ######################################################################
-      # 8. Fenster ist weiterhin geöffnet: Rollo bleibt offen
-      ######################################################################
-      - conditions:
-          - condition: template
-            value_template: "{{ is_state(window_contact, 'on') }}"
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ not is_fully_open }}"
-                sequence:
-                  - action: cover.set_cover_position
-                    target:
-                      entity_id: !input cover_entity
-                    data:
-                      position: "{{ open_position }}"
-          - stop: Fenster ist geöffnet.
-
-      ######################################################################
-      # 9. Markise ist weiterhin ausgefahren: Rollo bleibt offen
-      ######################################################################
-      - conditions:
-          - condition: template
-            value_template: "{{ has_awning and not awning_is_closed }}"
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ not is_fully_open }}"
-                sequence:
-                  - action: cover.set_cover_position
-                    target:
-                      entity_id: !input cover_entity
-                    data:
-                      position: "{{ open_position }}"
-          - stop: Markise ist ausgefahren.
-
-      ######################################################################
-      # 10. Geschlossen/Nacht: Automatik greift nicht ein
+      # 8. Geschlossen/Nacht: Automatik greift nicht ein
+      #
+      # Ein periodischer Startcheck darf ein nachts geschlossenes Rollo
+      # niemals wegen eines offenen Fensters oder einer Markise öffnen.
       ######################################################################
       - conditions:
           - condition: template
@@ -889,7 +873,7 @@ actions:
           - stop: Rollo ist vollständig geschlossen; Nacht-/Schlafposition wird respektiert.
 
       ######################################################################
-      # 11. Manueller Hitzeschutz
+      # 9. Manueller Hitzeschutz
       ######################################################################
       - conditions:
           - condition: template
@@ -908,7 +892,7 @@ actions:
           - stop: Manueller Hitzeschutz ist aktiv.
 
       ######################################################################
-      # 12. Manuelle Zwischenpositionen respektieren
+      # 10. Manuelle Zwischenpositionen respektieren
       ######################################################################
       - conditions:
           - condition: template
@@ -917,7 +901,7 @@ actions:
           - stop: Manuell gewählte Zwischenposition wird respektiert.
 
       ######################################################################
-      # 13. Rollo wurde vollständig geöffnet:
+      # 11. Rollo wurde vollständig geöffnet:
       #     Nach kurzer Motor-Wartezeit Sonnenschutz erneut prüfen
       ######################################################################
       - conditions:
@@ -957,7 +941,7 @@ actions:
           - stop: Vollständig geöffnetes Rollo wurde auf Sonnenschutzposition gesetzt.
 
       ######################################################################
-      # 14. Neue automatische Beschattung starten
+      # 12. Neue automatische Beschattung starten
       #     Gilt für Template-Trigger und periodische Nachprüfung.
       ######################################################################
       - conditions:
