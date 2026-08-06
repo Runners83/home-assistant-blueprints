@@ -381,7 +381,8 @@ blueprint:
       selector:
         text:
 
-mode: restart
+mode: queued
+max: 10
 max_exceeded: silent
 
 trace:
