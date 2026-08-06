@@ -1,7 +1,7 @@
 blueprint:
-  name: Intelligenter Sonnenschutz V2.0.2 – DWD, Lux, Sonnenstand, Fenster und Markise
+  name: Intelligenter Sonnenschutz V2.0.3 – DWD, Lux, Sonnenstand, Fenster und Markise
   description: >
-    Version 2.0.2. Startet die Beschattung nur bei passenden Wetter-, Bewölkungs-,
+    Version 2.0.3. Startet die Beschattung nur bei passenden Wetter-, Bewölkungs-,
     Helligkeits-, Sonnenstands- und Temperaturbedingungen. Eine bereits erreichte
     Beschattungsposition bleibt auch bei Wolken und schwankenden Luxwerten erhalten.
     Die aktuelle Rollo-Position bestimmt das Verhalten: geschlossen = Nacht/Schlaf,
@@ -365,6 +365,22 @@ blueprint:
           step: 1
           unit_of_measurement: "%"
 
+    diagnostic_mode:
+      name: Diagnosemodus
+      description: >
+        Schreibt bei Startprüfungen und Fahrbefehlen verständliche Einträge ins
+        Home-Assistant-Logbuch. Für den normalen Betrieb kann er ausgeschaltet bleiben.
+      default: false
+      selector:
+        boolean:
+
+    diagnostic_name:
+      name: Name für Diagnoseeinträge
+      description: Zum Beispiel "Sonnenschutz Schlafzimmer".
+      default: "Intelligenter Sonnenschutz"
+      selector:
+        text:
+
 mode: restart
 max_exceeded: silent
 
@@ -525,6 +541,8 @@ variables:
   position_tolerance: !input position_tolerance
   only_open_if_automation_shaded: !input only_open_if_automation_shaded
   shading_end_max_position: !input shading_end_max_position
+  diagnostic_mode: !input diagnostic_mode
+  diagnostic_name: !input diagnostic_name
 
   trigger_id: >
     {{ trigger.id if trigger is defined and trigger.id is defined else 'manual_run' }}
@@ -607,6 +625,43 @@ variables:
         or inside_temperature > minimum_inside_temperature
       )
     }}
+
+  diagnostic_reason: >
+    {% if not automation_time_active %}
+      Nachtsperre aktiv
+    {% elif not is_state(master_switch, 'on') %}
+      Master-Schalter aus
+    {% elif not is_state(local_switch, 'on') %}
+      Raumschalter aus
+    {% elif is_state(window_contact, 'on') %}
+      Fenster geöffnet
+    {% elif not awning_is_closed %}
+      Markise ausgefahren
+    {% elif is_fully_closed %}
+      Rollo vollständig geschlossen
+    {% elif is_manual_intermediate_position %}
+      manuelle Zwischenposition {{ current_position }} %
+    {% elif not is_fully_open %}
+      Rollo nicht vollständig offen ({{ current_position }} %)
+    {% elif lux < 0 %}
+      Helligkeitssensor nicht verfügbar
+    {% elif cloud < 0 %}
+      Bewölkungssensor nicht verfügbar
+    {% elif weather not in allowed_weather_states %}
+      Wetterzustand {{ weather }} nicht erlaubt
+    {% elif cloud > maximum_cloud_cover %}
+      Bewölkung {{ cloud | round(0) }} % über Maximum {{ maximum_cloud_cover }} %
+    {% elif elevation < minimum_elevation %}
+      Sonnenhöhe {{ elevation | round(1) }}° unter Minimum {{ minimum_elevation }}°
+    {% elif azimuth < minimum_azimuth or azimuth > maximum_azimuth %}
+      Azimut {{ azimuth | round(1) }}° außerhalb {{ minimum_azimuth }}–{{ maximum_azimuth }}°
+    {% elif lux < active_lux_threshold %}
+      Helligkeit {{ lux | round(0) }} lx unter Schwelle {{ active_lux_threshold }} lx
+    {% elif not (outside_temperature > minimum_outside_temperature or inside_temperature > minimum_inside_temperature) %}
+      Temperatur zu niedrig: außen {{ outside_temperature | round(1) }}°C, innen {{ inside_temperature | round(1) }}°C
+    {% else %}
+      alle Startbedingungen erfüllt
+    {% endif %}
 
   # Dynamische Szenen zum Merken der Position vor Fenster-/Markisenöffnung.
   snapshot_base: >
@@ -1044,7 +1099,54 @@ actions:
             data:
               position: "{{ ventilation_position }}"
 
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ diagnostic_mode }}"
+                sequence:
+                  - action: logbook.log
+                    data:
+                      name: "{{ diagnostic_name }}"
+                      message: >-
+                        Beschattung gestartet: Lux={{ lux | round(0) }} lx;
+                        Schwelle={{ active_lux_threshold }} lx; Wolken={{ cloud | round(0) }} %;
+                        Wetter={{ weather }}; außen={{ outside_temperature | round(1) }}°C;
+                        innen={{ inside_temperature | round(1) }}°C; Azimut={{ azimuth | round(1) }}°;
+                        Elevation={{ elevation | round(1) }}°.
+                      entity_id: "{{ cover_entity }}"
+
           - stop: Automatische Beschattung wurde gestartet.
+
+      ######################################################################
+      # Diagnose: Warum wurde keine neue Beschattung gestartet?
+      ######################################################################
+      - conditions:
+          - condition: template
+            value_template: >
+              {{
+                diagnostic_mode
+                and trigger_id in [
+                  'automatic_sun_on',
+                  'automation_start_time',
+                  'periodic_start_check',
+                  'control_changed',
+                  'home_assistant_start',
+                  'manual_run'
+                ]
+              }}
+        sequence:
+          - action: logbook.log
+            data:
+              name: "{{ diagnostic_name }}"
+              message: >-
+                Keine Beschattung: {{ diagnostic_reason }}.
+                Lux={{ lux | round(0) }} lx; Schwelle={{ active_lux_threshold }} lx;
+                Wolken={{ cloud | round(0) }} %; Wetter={{ weather }};
+                außen={{ outside_temperature | round(1) }}°C; innen={{ inside_temperature | round(1) }}°C;
+                Azimut={{ azimuth | round(1) }}°; Elevation={{ elevation | round(1) }}°;
+                Position={{ current_position }} %.
+              entity_id: "{{ cover_entity }}"
+          - stop: Diagnoseeintrag geschrieben.
 
     default:
       - stop: Keine Aktion erforderlich.
