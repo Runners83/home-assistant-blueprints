@@ -1,7 +1,7 @@
 blueprint:
-  name: Intelligenter Sonnenschutz V2.0.1 – DWD, Lux, Sonnenstand, Fenster und Markise
+  name: Intelligenter Sonnenschutz V2.0.2 – DWD, Lux, Sonnenstand, Fenster und Markise
   description: >
-    Version 2.0.1. Startet die Beschattung nur bei passenden Wetter-, Bewölkungs-,
+    Version 2.0.2. Startet die Beschattung nur bei passenden Wetter-, Bewölkungs-,
     Helligkeits-, Sonnenstands- und Temperaturbedingungen. Eine bereits erreichte
     Beschattungsposition bleibt auch bei Wolken und schwankenden Luxwerten erhalten.
     Die aktuelle Rollo-Position bestimmt das Verhalten: geschlossen = Nacht/Schlaf,
@@ -44,12 +44,21 @@ blueprint:
       selector:
         time:
 
+    automation_start_time:
+      name: Beginn der Sonnenschutz-Automatik
+      description: >
+        Vor dieser Uhrzeit bleibt der Blueprint vollständig gesperrt. Standardmäßig
+        beginnt die Automatik um 09:00 Uhr.
+      default: "09:00:00"
+      selector:
+        time:
+
     shading_end_time:
-      name: Ende der automatischen Beschattung
+      name: Ende der automatischen Beschattung / Beginn Nachtsperre
       description: >
         Zu dieser Uhrzeit wird ein Rollo aus der Beschattungsposition vollständig
-        geöffnet. Geschlossene oder manuell gewählte Zwischenpositionen bleiben
-        unverändert.
+        geöffnet. Danach bleibt der Blueprint bis zur Startzeit gesperrt.
+        Geschlossene oder manuell gewählte Zwischenpositionen bleiben unverändert.
       default: "18:00:00"
       selector:
         time:
@@ -449,6 +458,10 @@ triggers:
     id: manual_boost_off_time
 
   - trigger: time
+    at: !input automation_start_time
+    id: automation_start_time
+
+  - trigger: time
     at: !input shading_end_time
     id: shading_end_time
 
@@ -480,6 +493,7 @@ variables:
   master_switch: !input master_switch
   local_switch: !input local_switch
   manual_boost_switch: !input manual_boost_switch
+  automation_start_time: !input automation_start_time
   shading_end_time: !input shading_end_time
 
   cover_entity: !input cover_entity
@@ -550,8 +564,17 @@ variables:
       and not is_at_shading_position
     }}
 
+  automation_time_active: >
+    {% set start = today_at(automation_start_time) %}
+    {% set end = today_at(shading_end_time) %}
+    {% if start < end %}
+      {{ now() >= start and now() < end }}
+    {% else %}
+      {{ now() >= start or now() < end }}
+    {% endif %}
+
   before_shading_end: >
-    {{ now() < today_at(shading_end_time) }}
+    {{ automation_time_active }}
 
   lux: "{{ states(illuminance_sensor) | float(-1) }}"
   weather: "{{ states(weather_condition_sensor) }}"
@@ -671,7 +694,49 @@ actions:
           - stop: Beschattungs-Endzeit wurde erreicht.
 
       ######################################################################
-      # 3. Master- oder Raumschalter AUS: keine automatische Bewegung
+      # 3. Beginn der Tagesfreigabe
+      #
+      # Um 09:00 Uhr (oder zur eingestellten Startzeit) wird nur geprüft,
+      # ob ein vollständig geöffnetes Rollo jetzt beschattet werden muss.
+      # Geschlossene und manuelle Zwischenpositionen bleiben unverändert.
+      ######################################################################
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger_id == 'automation_start_time' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_fully_open }}"
+                  - condition: template
+                    value_template: "{{ automatic_conditions_now }}"
+                  - condition: template
+                    value_template: "{{ is_state(window_contact, 'off') }}"
+                  - condition: template
+                    value_template: "{{ awning_is_closed }}"
+                sequence:
+                  - action: cover.set_cover_position
+                    target:
+                      entity_id: !input cover_entity
+                    data:
+                      position: "{{ ventilation_position }}"
+
+          - stop: Tagesfreigabe der Sonnenschutz-Automatik wurde geprüft.
+
+      ######################################################################
+      # 4. Nachtsperre
+      #
+      # Außerhalb des Zeitfensters (standardmäßig 18:00 bis 09:00 Uhr)
+      # führt dieser Blueprint keinerlei Rollo-Bewegungen aus.
+      ######################################################################
+      - conditions:
+          - condition: template
+            value_template: "{{ not automation_time_active }}"
+        sequence:
+          - stop: Nachtsperre ist aktiv.
+
+      ######################################################################
+      # 5. Master- oder Raumschalter AUS: keine automatische Bewegung
       ######################################################################
       - conditions:
           - condition: template
@@ -684,7 +749,7 @@ actions:
           - stop: Sonnenschutz ist über einen Schalter deaktiviert.
 
       ######################################################################
-      # 4. Fenster wird geöffnet:
+      # 6. Fenster wird geöffnet:
       #    aktuelle Position speichern und Rollo vollständig öffnen
       ######################################################################
       - conditions:
@@ -706,7 +771,7 @@ actions:
           - stop: Fenster geöffnet; vorherige Rollo-Position wurde gespeichert.
 
       ######################################################################
-      # 5. Markise wird ausgefahren:
+      # 7. Markise wird ausgefahren:
       #    aktuelle Position speichern und Rollo vollständig öffnen
       ######################################################################
       - conditions:
@@ -729,7 +794,7 @@ actions:
           - stop: Markise ausgefahren; vorherige Rollo-Position wurde gespeichert.
 
       ######################################################################
-      # 6. Fenster wird geschlossen:
+      # 8. Fenster wird geschlossen:
       #    vorherige Position wiederherstellen, sofern Markise eingefahren ist
       ######################################################################
       - conditions:
@@ -795,7 +860,7 @@ actions:
           - stop: Fenster geschlossen; keine gespeicherte Position vorhanden.
 
       ######################################################################
-      # 7. Markise wird eingefahren:
+      # 9. Markise wird eingefahren:
       #    vorherige Position wiederherstellen, sofern Fenster geschlossen ist
       ######################################################################
       - conditions:
@@ -861,7 +926,7 @@ actions:
           - stop: Markise eingefahren; keine gespeicherte Position vorhanden.
 
       ######################################################################
-      # 8. Geschlossen/Nacht: Automatik greift nicht ein
+      # 10. Geschlossen/Nacht: Automatik greift nicht ein
       #
       # Ein periodischer Startcheck darf ein nachts geschlossenes Rollo
       # niemals wegen eines offenen Fensters oder einer Markise öffnen.
@@ -873,7 +938,7 @@ actions:
           - stop: Rollo ist vollständig geschlossen; Nacht-/Schlafposition wird respektiert.
 
       ######################################################################
-      # 9. Manueller Hitzeschutz
+      # 11. Manueller Hitzeschutz
       ######################################################################
       - conditions:
           - condition: template
@@ -892,7 +957,7 @@ actions:
           - stop: Manueller Hitzeschutz ist aktiv.
 
       ######################################################################
-      # 10. Manuelle Zwischenpositionen respektieren
+      # 12. Manuelle Zwischenpositionen respektieren
       ######################################################################
       - conditions:
           - condition: template
@@ -901,7 +966,7 @@ actions:
           - stop: Manuell gewählte Zwischenposition wird respektiert.
 
       ######################################################################
-      # 11. Rollo wurde vollständig geöffnet:
+      # 13. Rollo wurde vollständig geöffnet:
       #     Nach kurzer Motor-Wartezeit Sonnenschutz erneut prüfen
       ######################################################################
       - conditions:
@@ -941,7 +1006,7 @@ actions:
           - stop: Vollständig geöffnetes Rollo wurde auf Sonnenschutzposition gesetzt.
 
       ######################################################################
-      # 12. Neue automatische Beschattung starten
+      # 14. Neue automatische Beschattung starten
       #     Gilt für Template-Trigger und periodische Nachprüfung.
       ######################################################################
       - conditions:
@@ -950,6 +1015,7 @@ actions:
               {{
                 trigger_id in [
                   'automatic_sun_on',
+                  'automation_start_time',
                   'periodic_start_check',
                   'control_changed',
                   'home_assistant_start',
