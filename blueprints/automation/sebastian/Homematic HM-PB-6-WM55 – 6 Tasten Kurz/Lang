@@ -1,363 +1,209 @@
 blueprint:
   name: Homematic HM-PB-6-WM55 – 6 Tasten Kurz/Lang
   description: >
-    Universeller Blueprint für den Homematic HM-PB-6-WM55 6-fach Wandtaster
-    über Homematic(IP) Local / CCU.
+    Blueprint für den Homematic HM-PB-6-WM55 6-fach Wandtaster
+    über Homematic(IP) Local for OpenCCU.
 
-    Unterstützt alle 6 Kanäle (ch1 bis ch6) mit:
-      - kurzem Tastendruck (press_short)
-      - langem Tastendruck (press_long)
+    Es wird nur der Homematic-Taster als Gerät ausgewählt.
 
-    Für jede Taste können beliebige Home-Assistant-Aktionen hinterlegt werden,
-    z. B. Licht umschalten (Toggle), Ein/Aus, KNX, Szenen, Rollos oder Skripte.
+    Für jede der 6 Tasten können unabhängig Aktionen für
+    kurzen und langen Tastendruck definiert werden.
 
-    Nicht benötigte Aktionen können einfach leer bleiben.
-
-    Hinweis:
-    press_cont und press_long_release werden bewusst nicht ausgewertet.
+    Alle Aktionen sind optional und können leer bleiben.
+    Als Aktion kann jede Home-Assistant-Aktion verwendet werden,
+    z. B. Toggle, Ein, Aus, KNX-Licht, Szene, Rollo oder Skript.
 
   domain: automation
 
+  homeassistant:
+    min_version: 2026.8.0
+
   input:
-
-    channel_1:
-      name: Taste 1 – ch1
-      description: Event-Entität von Kanal 1
+    remote:
+      name: Homematic 6-fach Taster
+      description: Wähle deinen HM-PB-6-WM55 aus.
       selector:
-        entity:
+        device:
           filter:
-            - domain: event
-              device_class: button
-
-    channel_2:
-      name: Taste 2 – ch2
-      description: Event-Entität von Kanal 2
-      selector:
-        entity:
-          filter:
-            - domain: event
-              device_class: button
-
-    channel_3:
-      name: Taste 3 – ch3
-      description: Event-Entität von Kanal 3
-      selector:
-        entity:
-          filter:
-            - domain: event
-              device_class: button
-
-    channel_4:
-      name: Taste 4 – ch4
-      description: Event-Entität von Kanal 4
-      selector:
-        entity:
-          filter:
-            - domain: event
-              device_class: button
-
-    channel_5:
-      name: Taste 5 – ch5
-      description: Event-Entität von Kanal 5
-      selector:
-        entity:
-          filter:
-            - domain: event
-              device_class: button
-
-    channel_6:
-      name: Taste 6 – ch6
-      description: Event-Entität von Kanal 6
-      selector:
-        entity:
-          filter:
-            - domain: event
-              device_class: button
-
-
-    # ---------------------------------------------------------
-    # TASTE 1
-    # ---------------------------------------------------------
+            - integration: homematicip_local
+              model: HM-PB-6-WM55
 
     button_1_short:
-      name: Taste 1 – Kurz
-      description: Aktion bei kurzem Tastendruck
+      name: "Taste 1 – Kurz"
       default: []
       selector:
         action:
 
     button_1_long:
-      name: Taste 1 – Lang
-      description: Aktion bei langem Tastendruck
+      name: "Taste 1 – Lang"
       default: []
       selector:
         action:
 
-
-    # ---------------------------------------------------------
-    # TASTE 2
-    # ---------------------------------------------------------
-
     button_2_short:
-      name: Taste 2 – Kurz
-      description: Aktion bei kurzem Tastendruck
+      name: "Taste 2 – Kurz"
       default: []
       selector:
         action:
 
     button_2_long:
-      name: Taste 2 – Lang
-      description: Aktion bei langem Tastendruck
+      name: "Taste 2 – Lang"
       default: []
       selector:
         action:
 
-
-    # ---------------------------------------------------------
-    # TASTE 3
-    # ---------------------------------------------------------
-
     button_3_short:
-      name: Taste 3 – Kurz
-      description: Aktion bei kurzem Tastendruck
+      name: "Taste 3 – Kurz"
       default: []
       selector:
         action:
 
     button_3_long:
-      name: Taste 3 – Lang
-      description: Aktion bei langem Tastendruck
+      name: "Taste 3 – Lang"
       default: []
       selector:
         action:
 
-
-    # ---------------------------------------------------------
-    # TASTE 4
-    # ---------------------------------------------------------
-
     button_4_short:
-      name: Taste 4 – Kurz
-      description: Aktion bei kurzem Tastendruck
+      name: "Taste 4 – Kurz"
       default: []
       selector:
         action:
 
     button_4_long:
-      name: Taste 4 – Lang
-      description: Aktion bei langem Tastendruck
+      name: "Taste 4 – Lang"
       default: []
       selector:
         action:
 
-
-    # ---------------------------------------------------------
-    # TASTE 5
-    # ---------------------------------------------------------
-
     button_5_short:
-      name: Taste 5 – Kurz
-      description: Aktion bei kurzem Tastendruck
+      name: "Taste 5 – Kurz"
       default: []
       selector:
         action:
 
     button_5_long:
-      name: Taste 5 – Lang
-      description: Aktion bei langem Tastendruck
+      name: "Taste 5 – Lang"
       default: []
       selector:
         action:
 
-
-    # ---------------------------------------------------------
-    # TASTE 6
-    # ---------------------------------------------------------
-
     button_6_short:
-      name: Taste 6 – Kurz
-      description: Aktion bei kurzem Tastendruck
+      name: "Taste 6 – Kurz"
       default: []
       selector:
         action:
 
     button_6_long:
-      name: Taste 6 – Lang
-      description: Aktion bei langem Tastendruck
+      name: "Taste 6 – Lang"
       default: []
       selector:
         action:
 
 
-mode: queued
-max: 10
-
-
-# =============================================================
-# TRIGGER
-# =============================================================
-
 triggers:
-
-  # Taste 1
-  - trigger: state
-    entity_id: !input channel_1
-    attribute: event_type
-    to: press_short
-    id: button_1_short
-
-  - trigger: state
-    entity_id: !input channel_1
-    attribute: event_type
-    to: press_long
-    id: button_1_long
+  - trigger: event.received
+    target:
+      device_id: !input remote
+    options:
+      event_type:
+        - press_short
+        - press_long
 
 
-  # Taste 2
-  - trigger: state
-    entity_id: !input channel_2
-    attribute: event_type
-    to: press_short
-    id: button_2_short
+conditions: []
 
-  - trigger: state
-    entity_id: !input channel_2
-    attribute: event_type
-    to: press_long
-    id: button_2_long
-
-
-  # Taste 3
-  - trigger: state
-    entity_id: !input channel_3
-    attribute: event_type
-    to: press_short
-    id: button_3_short
-
-  - trigger: state
-    entity_id: !input channel_3
-    attribute: event_type
-    to: press_long
-    id: button_3_long
-
-
-  # Taste 4
-  - trigger: state
-    entity_id: !input channel_4
-    attribute: event_type
-    to: press_short
-    id: button_4_short
-
-  - trigger: state
-    entity_id: !input channel_4
-    attribute: event_type
-    to: press_long
-    id: button_4_long
-
-
-  # Taste 5
-  - trigger: state
-    entity_id: !input channel_5
-    attribute: event_type
-    to: press_short
-    id: button_5_short
-
-  - trigger: state
-    entity_id: !input channel_5
-    attribute: event_type
-    to: press_long
-    id: button_5_long
-
-
-  # Taste 6
-  - trigger: state
-    entity_id: !input channel_6
-    attribute: event_type
-    to: press_short
-    id: button_6_short
-
-  - trigger: state
-    entity_id: !input channel_6
-    attribute: event_type
-    to: press_long
-    id: button_6_long
-
-
-# =============================================================
-# AKTIONEN
-# =============================================================
 
 actions:
+  - variables:
+      event_type: "{{ trigger.event_type }}"
+      channel_no: "{{ trigger.entity.attributes.channel_no | int }}"
 
   - choose:
 
-      # Taste 1
+      # TASTE 1
       - conditions:
-          - condition: trigger
-            id: button_1_short
+          - condition: template
+            value_template: >
+              {{ channel_no == 1 and event_type == 'press_short' }}
         sequence: !input button_1_short
 
       - conditions:
-          - condition: trigger
-            id: button_1_long
+          - condition: template
+            value_template: >
+              {{ channel_no == 1 and event_type == 'press_long' }}
         sequence: !input button_1_long
 
 
-      # Taste 2
+      # TASTE 2
       - conditions:
-          - condition: trigger
-            id: button_2_short
+          - condition: template
+            value_template: >
+              {{ channel_no == 2 and event_type == 'press_short' }}
         sequence: !input button_2_short
 
       - conditions:
-          - condition: trigger
-            id: button_2_long
+          - condition: template
+            value_template: >
+              {{ channel_no == 2 and event_type == 'press_long' }}
         sequence: !input button_2_long
 
 
-      # Taste 3
+      # TASTE 3
       - conditions:
-          - condition: trigger
-            id: button_3_short
+          - condition: template
+            value_template: >
+              {{ channel_no == 3 and event_type == 'press_short' }}
         sequence: !input button_3_short
 
       - conditions:
-          - condition: trigger
-            id: button_3_long
+          - condition: template
+            value_template: >
+              {{ channel_no == 3 and event_type == 'press_long' }}
         sequence: !input button_3_long
 
 
-      # Taste 4
+      # TASTE 4
       - conditions:
-          - condition: trigger
-            id: button_4_short
+          - condition: template
+            value_template: >
+              {{ channel_no == 4 and event_type == 'press_short' }}
         sequence: !input button_4_short
 
       - conditions:
-          - condition: trigger
-            id: button_4_long
+          - condition: template
+            value_template: >
+              {{ channel_no == 4 and event_type == 'press_long' }}
         sequence: !input button_4_long
 
 
-      # Taste 5
+      # TASTE 5
       - conditions:
-          - condition: trigger
-            id: button_5_short
+          - condition: template
+            value_template: >
+              {{ channel_no == 5 and event_type == 'press_short' }}
         sequence: !input button_5_short
 
       - conditions:
-          - condition: trigger
-            id: button_5_long
+          - condition: template
+            value_template: >
+              {{ channel_no == 5 and event_type == 'press_long' }}
         sequence: !input button_5_long
 
 
-      # Taste 6
+      # TASTE 6
       - conditions:
-          - condition: trigger
-            id: button_6_short
+          - condition: template
+            value_template: >
+              {{ channel_no == 6 and event_type == 'press_short' }}
         sequence: !input button_6_short
 
       - conditions:
-          - condition: trigger
-            id: button_6_long
+          - condition: template
+            value_template: >
+              {{ channel_no == 6 and event_type == 'press_long' }}
         sequence: !input button_6_long
+
+
+mode: queued
+max: 10
