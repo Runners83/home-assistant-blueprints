@@ -116,9 +116,8 @@ conditions: []
 
 actions:
   - variables:
-      event_type: "{{ trigger.event_type }}"
-      channel_no: "{{ trigger.entity.attributes.channel_no | int }}"
-
+      event_type: "{{ trigger.to_state.attributes.event_type }}"
+      channel_no: "{{ trigger.to_state.attributes.channel_no | int(-1) }}"
   - choose:
 
       # TASTE 1
